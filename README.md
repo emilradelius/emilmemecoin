@@ -96,6 +96,43 @@ after you'd have been stopped out would be lying to yourself. Accounts posting
 more than 8 calls a day, or whose median call is already up 4× when they post,
 are rejected as spray-and-pray and late callers respectively.
 
+### Flow confirmation — is the move still live?
+
+**DexScreener is not a fourth consensus source, deliberately.** It shows *what*
+is happening to a token — price, volume, buys, sells — but never *who* is doing
+it. Consensus counts independent, individually-scored actors, and anonymous
+aggregate volume has no actor to attribute. Treating it as a source would mean
+counting a pump-and-dump's own wash trading as if it were a good trader's
+opinion, which inflates conviction on exactly the tokens you most want to
+avoid.
+
+So it does a complementary job — it confirms or vetoes what the traders said,
+answering three questions the trader signals can't:
+
+- **Is the move still happening?** Signals arrive with lag. Five wallets bought
+  twenty minutes ago but current 5-minute volume has collapsed → that's a move
+  you already missed, and buying it is buying their exit. Vetoed.
+- **Who's winning right now?** If the last five minutes is mostly selling, the
+  current tape is distribution regardless of what happened an hour ago. Vetoed.
+- **Has it already run?** Up 400%+ in an hour *and* decelerating → the
+  asymmetry that made it worth buying is gone. Vetoed. (Still accelerating is
+  allowed through — vetoing every fast mover would filter out the whole
+  category.)
+
+Otherwise it applies a bounded multiplier to conviction. The ceiling is
+deliberately small (1.25×) and the floor much larger (0.6×): **good flow is
+weak evidence, bad flow is strong evidence.** It can never promote a weak
+signal to STRONG — there's nobody behind it. That property is pinned by a test.
+
+**Boosts are a negative signal.** DexScreener "boosts" are paid promotion
+bought by whoever is behind the token. The naive reading is that a boosted
+token is trending and worth buying. The accurate reading is that someone is
+spending money to put it in front of retail — which is what you do when you
+need exit liquidity. An organic move doesn't need to buy visibility. Not
+disqualifying on its own, but it costs up to 35% of conviction, scaled by spend
+and amplified for very young tokens (a promotion budget that existed before the
+community did).
+
 ### Exits — because a buy signal without a sell plan is worthless
 
 Every alerted position is tracked until closed, with six triggers in priority
@@ -221,15 +258,19 @@ whether the strategy works.
 ## Architecture
 
 ```
-sources ──> signal queue ──> consensus ──> safety gate ──> alert gate ──> Telegram
-   │                             ▲                              │
-   │                             │                              ▼
-   └─ pump.fun (websocket)   clustering                     execution
-      X (batched search)     trader scores                  (paper/live)
-      AlphaLedger (polling)                                      │
-                                                                 ▼
-                                                          exit monitor
+sources ──> signal queue ──> consensus ──> safety gate ──> flow gate ──> alert gate ──> Telegram
+   │                          ▲                          │                    │
+   │                          │                          │                    ▼
+   └─ pump.fun (websocket)  clustering        DexScreener flow +          execution
+      X (batched search)    trader scores     boost penalty               (paper/live)
+      AlphaLedger (polling)                   (veto / discount only)           │
+                                                                               ▼
+                                                                        exit monitor
 ```
+
+DexScreener also underpins the layers it isn't a source for: price and
+liquidity for the safety gate, ticker→mint resolution for tweets, live pricing
+for exit monitoring, and modelled slippage for paper fills.
 
 One asyncio process, SQLite, no broker, no external database. At a few
 thousand signals a day for one user, adding those would only add ways to fail
@@ -238,7 +279,7 @@ silently.
 ```
 memebot/
   sources/     pump.fun websocket, X batched poller + budget governor, AlphaLedger
-  enrich/      DexScreener, RugCheck, ticker→mint resolver, SOL price
+  enrich/      DexScreener, flow analysis, boosts, RugCheck, resolver, SOL price
   scoring/     safety gate, trader scorecards, Sybil clustering, consensus
   alerts/      Telegram, formatting, daily budget + quiet hours
   execution/   paper, live (self-signing), guardrails, mode manager
@@ -247,7 +288,7 @@ memebot/
 ```
 
 ```bash
-pip install -r requirements-dev.txt && pytest    # 96 tests
+pip install -r requirements-dev.txt && pytest    # 113 tests
 ```
 
 ---

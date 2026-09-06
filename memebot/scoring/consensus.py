@@ -209,6 +209,33 @@ class ConsensusEngine:
             out.append("⚠ risk-off regime: thresholds raised")
         return out
 
+    def apply_confirmation(
+        self,
+        cand: Candidate,
+        multiplier: float,
+        *,
+        risk_off: bool = False,
+        notes: list[str] | None = None,
+    ) -> Candidate:
+        """Apply a market-flow confirmation multiplier and re-derive the tier.
+
+        Kept separate from :meth:`score` because it is a different kind of
+        evidence: :meth:`score` weighs *who* is buying, this weighs *whether
+        the move is still there*. Multipliers here are bounded below 1.0 in
+        practice, so this can demote a candidate but only marginally promote
+        one - flow with no actor behind it is not a reason to buy.
+        """
+        cand.conviction = round(cand.conviction * multiplier, 3)
+        cand.tier = self._tier(
+            cand.conviction,
+            cand.independent_actors,
+            len(cand.distinct_sources),
+            risk_off=risk_off,
+        )
+        for note in notes or []:
+            cand.rationale.append(note)
+        return cand
+
     def score_all(
         self,
         signals: list[Signal],

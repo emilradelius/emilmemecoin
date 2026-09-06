@@ -101,7 +101,7 @@ def format_buy(cand: Candidate, *, provider: str = "axiom",
             lines.append(f"⚠️ {_esc(', '.join(s.warnings[:3]))}")
 
     if cand.rationale:
-        lines += ["", "<b>Why</b>"] + [f"  · {_esc(r)}" for r in cand.rationale[:5]]
+        lines += ["", "<b>Why</b>"] + [f"  · {_esc(r)}" for r in cand.rationale[:7]]
 
     lines += [
         "",

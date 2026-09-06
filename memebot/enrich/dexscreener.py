@@ -30,11 +30,20 @@ class MarketData:
     liquidity_usd: float | None = None
     fdv_usd: float | None = None
     volume_24h_usd: float | None = None
+    volume_6h_usd: float | None = None
     volume_1h_usd: float | None = None
     volume_5m_usd: float | None = None
+    buys_5m: int = 0
+    sells_5m: int = 0
     buys_1h: int = 0
     sells_1h: int = 0
+    buys_6h: int = 0
+    sells_6h: int = 0
+    buys_24h: int = 0
+    sells_24h: int = 0
+    price_change_5m: float | None = None
     price_change_1h: float | None = None
+    price_change_6h: float | None = None
     price_change_24h: float | None = None
     pair_created_at: float | None = None   # epoch seconds
     pair_address: str | None = None
@@ -88,8 +97,20 @@ class DexScreener:
             return None
         return max(sol_pairs, key=lambda p: _f(p, "liquidity", "usd") or 0.0)
 
+    @staticmethod
+    def _txns(pair: dict[str, Any], window: str) -> tuple[int, int]:
+        bucket = (pair.get("txns") or {}).get(window) or {}
+        try:
+            return int(bucket.get("buys", 0) or 0), int(bucket.get("sells", 0) or 0)
+        except (TypeError, ValueError):
+            return 0, 0
+
     def _parse(self, mint: str, pair: dict[str, Any]) -> MarketData:
         created_ms = pair.get("pairCreatedAt")
+        b5, s5 = self._txns(pair, "m5")
+        b1, s1 = self._txns(pair, "h1")
+        b6, s6 = self._txns(pair, "h6")
+        b24, s24 = self._txns(pair, "h24")
         return MarketData(
             mint=mint,
             symbol=(pair.get("baseToken") or {}).get("symbol"),
@@ -98,11 +119,16 @@ class DexScreener:
             liquidity_usd=_f(pair, "liquidity", "usd"),
             fdv_usd=_f(pair, "fdv"),
             volume_24h_usd=_f(pair, "volume", "h24"),
+            volume_6h_usd=_f(pair, "volume", "h6"),
             volume_1h_usd=_f(pair, "volume", "h1"),
             volume_5m_usd=_f(pair, "volume", "m5"),
-            buys_1h=int((pair.get("txns", {}).get("h1", {}) or {}).get("buys", 0) or 0),
-            sells_1h=int((pair.get("txns", {}).get("h1", {}) or {}).get("sells", 0) or 0),
+            buys_5m=b5, sells_5m=s5,
+            buys_1h=b1, sells_1h=s1,
+            buys_6h=b6, sells_6h=s6,
+            buys_24h=b24, sells_24h=s24,
+            price_change_5m=_f(pair, "priceChange", "m5"),
             price_change_1h=_f(pair, "priceChange", "h1"),
+            price_change_6h=_f(pair, "priceChange", "h6"),
             price_change_24h=_f(pair, "priceChange", "h24"),
             pair_created_at=(created_ms / 1000.0) if created_ms else None,
             pair_address=pair.get("pairAddress"),

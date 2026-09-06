@@ -304,6 +304,59 @@ consensus:
     risk_off_conviction_multiplier: 1.5
 
 # -----------------------------------------------------------------------------
+# CONFIRMATION - DexScreener market flow, used to confirm or veto a signal.
+#
+# This is deliberately NOT a consensus source. DexScreener shows what is
+# happening to a token but never WHO is doing it, and consensus counts
+# independent scored actors. Treating anonymous aggregate volume as a source
+# would mean counting a pump-and-dump's own wash trading as if it were a good
+# trader's opinion.
+#
+# Instead it answers the questions the trader signals cannot: is the move still
+# live, who is winning the current tape, and has it already run? It can only
+# ever REDUCE conviction or block an alert - never promote one, because there
+# is nobody behind it.
+# -----------------------------------------------------------------------------
+confirmation:
+
+  flow:
+    enabled: true
+
+    # Veto if the last 5 minutes of trading is mostly selling. Whatever the
+    # traders did twenty minutes ago, the current tape is distribution and
+    # you would be buying into it.
+    min_buy_pressure_5m: 0.35
+
+    # Veto if current volume has collapsed relative to the trailing hour.
+    # Signals arrive with lag; this catches the case where the move you are
+    # being told about is already finished. Expressed as the current 5-minute
+    # rate extrapolated hourly, divided by the actual last hour.
+    min_acceleration: 0.25
+
+    # Veto if the token has already run this far in an hour AND is
+    # decelerating. The trader signal may be perfectly genuine - they got in
+    # far earlier than you can. Entering here is buying their exit.
+    # A token up this much that is STILL accelerating is allowed through.
+    max_run_up_1h_pct: 400.0
+
+    # Bounds on the conviction multiplier. Note the ceiling is deliberately
+    # small: good flow is weak evidence, bad flow is strong evidence.
+    min_multiplier: 0.60
+    max_multiplier: 1.25
+
+  boosts:
+    # DexScreener "boosts" are paid promotion bought by whoever is behind the
+    # token. This is a NEGATIVE signal: an organic move does not need to buy
+    # visibility, but someone who needs exit liquidity does.
+    enabled: true
+    refresh_seconds: 120
+    # Cumulative boost spend at which the full penalty applies.
+    heavy_boost_threshold: 500.0
+    # Maximum conviction reduction. Not disqualifying on its own - legitimate
+    # projects do occasionally boost - but it should cost them.
+    max_penalty: 0.35
+
+# -----------------------------------------------------------------------------
 # EXITS - if the bot tells you to buy, it owes you a sell.
 # -----------------------------------------------------------------------------
 exits:

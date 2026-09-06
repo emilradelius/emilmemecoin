@@ -32,7 +32,9 @@ from .alerts.formatter import format_buy, format_daily_report, format_exit
 from .alerts.gate import AlertGate
 from .alerts.telegram import TelegramBot
 from .config import Config
+from .enrich.boosts import BoostTracker
 from .enrich.dexscreener import DexScreener
+from .enrich.flow import FlowAnalyzer
 from .enrich.resolver import TokenResolver
 from .enrich.rugcheck import RugCheck
 from .enrich.solprice import SolPrice
@@ -62,6 +64,22 @@ class MemeBot:
         self.dex = DexScreener()
         self.rug = RugCheck()
         self.solprice = SolPrice(self.dex)
+        flow_cfg = cfg.get("confirmation.flow", {}) or {}
+        self.flow = FlowAnalyzer(
+            enabled=flow_cfg.get("enabled", True),
+            min_buy_pressure_5m=flow_cfg.get("min_buy_pressure_5m", 0.35),
+            min_acceleration=flow_cfg.get("min_acceleration", 0.25),
+            max_run_up_1h_pct=flow_cfg.get("max_run_up_1h_pct", 400.0),
+            min_multiplier=flow_cfg.get("min_multiplier", 0.60),
+            max_multiplier=flow_cfg.get("max_multiplier", 1.25),
+        )
+        boost_cfg = cfg.get("confirmation.boosts", {}) or {}
+        self.boosts_enabled = boost_cfg.get("enabled", True)
+        self.boosts = BoostTracker(
+            heavy_boost_threshold=boost_cfg.get("heavy_boost_threshold", 500.0),
+            max_penalty=boost_cfg.get("max_penalty", 0.35),
+            refresh_seconds=boost_cfg.get("refresh_seconds", 120),
+        )
         self.resolver = TokenResolver(
             self.dex,
             min_liquidity_usd=cfg.get("safety.min_liquidity_usd", 15000),
@@ -184,6 +202,41 @@ class MemeBot:
                 "%s cleared consensus (%.1f) but failed safety: %s",
                 (cand.token_symbol or mint[:8]), cand.conviction,
                 ", ".join(cand.safety.failures[:3]),
+            )
+            return
+
+        # --- market-flow confirmation -------------------------------------
+        # The traders told us WHO is buying. This asks whether the move is
+        # still there to catch. It can veto or discount, never promote.
+        market = await self.dex.get(mint)
+        analysis = self.flow.analyze(market)
+        if analysis.blocked:
+            self.store.record_rejection(mint, "flow", [analysis.veto or "flow_veto"])
+            log.info(
+                "%s cleared consensus (%.1f) and safety but was vetoed by flow: %s",
+                (cand.token_symbol or mint[:8]), cand.conviction, analysis.veto,
+            )
+            return
+
+        multiplier = analysis.multiplier
+        notes = list(analysis.notes)
+        if self.boosts_enabled:
+            await self.boosts.refresh()
+            boost_mult, boost_note = self.boosts.penalty(
+                mint, age_minutes=cand.safety.age_minutes if cand.safety else None
+            )
+            multiplier *= boost_mult
+            if boost_note:
+                notes.append(boost_note)
+
+        before = cand.conviction
+        self.consensus.apply_confirmation(
+            cand, multiplier, risk_off=self.alphaledger.risk_off, notes=notes
+        )
+        if cand.tier is Tier.NONE:
+            self.store.record_rejection(
+                mint, "confirmation",
+                [f"conviction {before:.1f} -> {cand.conviction:.1f} after flow/boost"],
             )
             return
 
@@ -642,7 +695,7 @@ class MemeBot:
                 await task
         for closable in (
             self.telegram, self.xfeed, self.alphaledger,
-            self.dex, self.rug, self.execution,
+            self.dex, self.rug, self.boosts, self.execution,
         ):
             with contextlib.suppress(Exception):
                 await closable.close()

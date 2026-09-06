@@ -27,6 +27,11 @@ Loosen in this order, one at a time, waiting a few days between changes:
 | `alerts.suppress_watch_tier` | true | false | pushes WATCH tier too |
 | `alerts.fill_budget_with_watch` | false | true | fills quiet days with marginal setups |
 
+If `/report` shows most rejections at `flow`, the move-confirmation gate is
+too strict for current conditions — loosen `confirmation.flow.min_acceleration`
+(0.25 → 0.15) before touching anything else, since that one vetoes hardest in
+slow markets.
+
 Do **not** start by loosening `safety.*`. Those thresholds are what stop you
 buying rugs, and they are the cheapest protection in the system.
 
@@ -62,3 +67,20 @@ one feels much better while you are running it.
 
 Give any change at least 30 closed positions before judging it. Below that you
 are reading noise.
+
+## Flow confirmation
+
+`confirmation.flow` vetoes signals where the move is already over. Three dials:
+
+| Setting | Default | Loosen if |
+|---|---|---|
+| `min_acceleration` | 0.25 | Too many rejections at `flow` in slow markets |
+| `min_buy_pressure_5m` | 0.35 | Rarely worth loosening — this one catches active distribution |
+| `max_run_up_1h_pct` | 400 | You want to chase faster movers (raises late-entry risk) |
+
+`confirmation.boosts.max_penalty` (0.35) controls how much paid promotion
+costs a token. Set it to 0 to ignore boosts entirely; raise it toward 1.0 to
+treat any paid promotion as near-disqualifying.
+
+Both can be disabled with `enabled: false`, which makes them exact no-ops
+rather than silently neutral.
