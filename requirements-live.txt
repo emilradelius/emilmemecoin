@@ -1,0 +1,2 @@
+-r requirements.txt
+solders>=0.21,<1

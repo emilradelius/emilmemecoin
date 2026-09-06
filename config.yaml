@@ -1,0 +1,414 @@
+# =============================================================================
+#  memebot - configuration
+# =============================================================================
+#  Every filter threshold in the system lives in this file. Nothing is
+#  hardcoded. Each value has a comment explaining WHAT it does and WHY it is
+#  set where it is, because the person running this does not need to already
+#  know meme coins to tune it.
+#
+#  The defaults are calibrated for "only the strongest, 2-5 alerts per day".
+#  If you want more alerts, the three dials that matter most are:
+#     alerts.daily_budget          (raise it)
+#     consensus.tiers.strong.min_conviction  (lower it)
+#     consensus.min_independent_actors       (lower it to 2)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SOURCES - where raw signals come from
+# -----------------------------------------------------------------------------
+sources:
+
+  pumpfun:
+    enabled: true
+    # PumpPortal's free data websocket. We subscribe to the *specific wallets*
+    # of traders we have scored as good, not the global firehose. The global
+    # feed is ~50 trades/second and is pure noise.
+    ws_url: "wss://pumpportal.fun/api/data"
+    # Reconnect backoff in seconds; doubles on repeated failure up to max.
+    reconnect_base_seconds: 2
+    reconnect_max_seconds: 120
+    # Hard ceiling on tracked wallets. PumpPortal meters subscribeAccountTrade
+    # at roughly 0.01 SOL per 10,000 events, so this bounds your spend too.
+    max_tracked_wallets: 150
+
+  x:
+    enabled: true
+    # We poll the timelines of scored accounts rather than using X's official
+    # filtered stream, which requires their $5,000/mo Pro tier.
+    provider: "twitterapi.io"
+    # Accounts are polled in BATCHES using X search syntax
+    # ("from:a OR from:b OR ..."), not one request per account. This matters
+    # enormously for cost: polling 60 accounts individually every 90s is
+    # ~$525/month, while the same coverage batched 20-at-a-time every 120s is
+    # ~$13/month. Run `python -m memebot.tools.cost` to price your own settings.
+    batch_size: 20
+    poll_interval_seconds: 120
+    min_poll_interval_seconds: 60
+    max_poll_interval_seconds: 900
+    # 40 accounts in 2 batches every 120s = ~1,440 requests/day = ~$13/month,
+    # leaving headroom under the $20 cap. Raising this to 60 costs ~$20/month
+    # exactly, which the governor will start throttling near month-end.
+    max_tracked_accounts: 40
+    # Ignore retweets - we want the account's own conviction, not amplification.
+    include_retweets: false
+    # Ignore replies by default; most CA drops happen in top-level posts, and
+    # replies are dominated by shill spam.
+    include_replies: false
+
+    # --- Budget governor -----------------------------------------------------
+    # Hard spend cap. The poller tracks estimated spend and degrades gracefully:
+    # at soft_stop_fraction it slows polling; at 100% it stops calling the API
+    # entirely for the rest of the calendar month and tells you on Telegram.
+    budget:
+      monthly_usd_cap: 20.00
+      # Provider price. twitterapi.io bills ~$0.15 per 1,000 tweets returned,
+      # with a floor of 1 billable tweet per request even when nothing is new.
+      usd_per_1k_tweets: 0.15
+      min_billable_tweets_per_request: 1
+      soft_stop_fraction: 0.80
+      # Reserve part of the budget for the end of the month so a busy week
+      # early on cannot blind the bot for the last 10 days.
+      daily_pacing: true
+
+  alphaledger:
+    # AlphaLedger.ai covers majors (BTC/ETH/SOL/large caps), not meme coins.
+    # It is used as a *regime filter* and a secondary confirmation source, NOT
+    # as a primary meme-coin trigger. See docs/ALPHALEDGER.md.
+    enabled: false          # flip to true once you have credentials
+    poll_interval_seconds: 300
+    # Treat AlphaLedger signals on majors as market-regime context: when the
+    # platform's top-ranked traders are net short / de-risking on majors,
+    # meme coin risk appetite is usually about to dry up.
+    use_as_regime_filter: true
+
+# -----------------------------------------------------------------------------
+# SAFETY GATE - hard filters. A token failing ANY of these is discarded before
+# it is ever scored. This is the single most valuable part of the bot: most
+# money in meme coins is lost to rugs, not to bad timing.
+# -----------------------------------------------------------------------------
+safety:
+  enabled: true
+
+  # Minimum pool liquidity in USD. Below this you physically cannot exit a
+  # meaningful position without eating catastrophic slippage. This is the most
+  # important single number in the file.
+  min_liquidity_usd: 15000
+
+  # Maximum liquidity - above this the token is already "found" and the
+  # asymmetric upside is gone. Set to 0 to disable the ceiling.
+  max_liquidity_usd: 2500000
+
+  # Token must be old enough that the instant-rug window has passed, but young
+  # enough that the move has not already happened.
+  min_age_minutes: 5
+  max_age_hours: 72
+
+  # Solana authorities. If the deployer can still mint new supply or freeze
+  # your wallet's tokens, you do not own an asset, you own a promise.
+  require_mint_authority_revoked: true
+  require_freeze_authority_revoked: true
+
+  # Liquidity pool tokens must be burned or locked, otherwise the deployer can
+  # withdraw the entire pool in one transaction. This is the classic rug.
+  require_lp_burned_or_locked: true
+
+  # Holder concentration, excluding the LP/bonding-curve account itself.
+  # If ten wallets hold a third of supply, they decide your exit price.
+  max_top10_holder_pct: 30.0
+  max_single_holder_pct: 10.0
+  max_dev_holding_pct: 5.0
+
+  # Too few holders means the "community" is one person with many wallets.
+  min_unique_holders: 75
+
+  # Bundled launches: supply bought by coordinated wallets in the first blocks.
+  # These are engineered exit liquidity events.
+  max_bundled_supply_pct: 25.0
+
+  # Wash-trading detector. Real tokens trade a few times their liquidity per
+  # day. A 24h volume 50x the pool size means bots cycling the same SOL.
+  max_volume_to_liquidity_ratio: 50.0
+
+  # Require at least this much genuine buy pressure in the last hour.
+  min_1h_volume_usd: 5000
+  min_1h_unique_buyers: 30
+
+  # RugCheck's own composite score. Their scale is inverted: lower is safer.
+  # Anything they flag as "danger" is rejected outright regardless of score.
+  max_rugcheck_score: 2500
+  reject_rugcheck_danger_flags: true
+
+  # Deployer history. A wallet that has shipped rugs before will do it again.
+  reject_if_deployer_rugged_before: true
+  deployer_lookback_days: 90
+
+# -----------------------------------------------------------------------------
+# TRADER SCORING - deciding who is actually worth following.
+# Recomputed on a schedule; wallets and accounts are promoted and demoted
+# automatically. You do not curate this list by hand.
+# -----------------------------------------------------------------------------
+traders:
+
+  # --- On-chain wallets (Pump.fun traders) --------------------------------
+  wallets:
+    # Rolling window over which performance is measured.
+    lookback_days: 30
+    # A wallet needs a real sample size before its win rate means anything.
+    min_closed_trades: 20
+    min_unique_tokens: 12
+
+    # Minimum realized profit over the window, in USD. Filters out wallets
+    # that are merely busy.
+    min_realized_pnl_usd: 25000
+
+    # Win rate on closed positions.
+    min_win_rate: 0.35
+    # Median exit multiple. Guards against a wallet whose entire record is one
+    # lucky 100x surrounded by losses - the mean would hide that, the median
+    # will not.
+    min_median_multiple: 1.15
+
+    # Hold time floor. Wallets that flip in under 30 seconds are snipers and
+    # MEV bots. Their edge is latency you do not have; by the time their trade
+    # reaches you the opportunity is gone. Not copyable.
+    min_avg_hold_seconds: 45
+    # Hold time ceiling: bag-holders whose "positions" are just tokens they
+    # could never sell.
+    max_avg_hold_seconds: 172800   # 48h
+
+    # Percentage of their buys that went to zero. Some rug exposure is normal
+    # in this asset class; a lot of it means they are not checking anything.
+    max_rug_rate: 0.25
+
+    # --- Exclusions: these are not traders, they are insiders --------------
+    # Wallets that buy tokens deployed by wallets they fund, or that are
+    # repeatedly among the first buyers of one deployer's tokens, are running
+    # the launch, not trading it. Their "wins" are not reproducible by you.
+    exclude_deployer_linked: true
+    exclude_first_buyer_repeat_threshold: 3   # same deployer, N+ times as an early buyer
+    exclude_self_funded_cluster: true
+
+    # Re-score cadence and demotion.
+    rescore_interval_hours: 24
+    # A tracked wallet whose trailing 7-day score falls this far below its
+    # 30-day score is demoted immediately - traders go cold, and the whole
+    # point is to notice before you do.
+    demote_on_7d_decay: 0.40
+
+  # --- X / Twitter accounts -----------------------------------------------
+  # You cannot see an X account's PnL, so they are scored on *call accuracy*:
+  # every time they post a contract address we snapshot the price and grade
+  # what happened next.
+  x_accounts:
+    lookback_days: 30
+    min_graded_calls: 10
+
+    # A "hit" is a call that reached this multiple before drawing down past
+    # the stop below. This models what you could actually have captured, not
+    # the wick they screenshot later.
+    hit_multiple: 2.0
+    hit_max_drawdown: 0.50
+    min_hit_rate: 0.30
+    min_avg_max_multiple: 1.8
+
+    # --- Penalties ---------------------------------------------------------
+    # Spray-and-pray: accounts posting many CAs a day are running a numbers
+    # game and will always be able to screenshot a winner.
+    max_calls_per_day: 8
+    # Late callers: accounts that consistently post only after a token has
+    # already run. Their calls are exit liquidity requests.
+    max_median_multiple_at_call_time: 4.0
+    # Paid promotion. Matched against text patterns in alerts/promo_patterns.
+    reject_paid_promo: true
+    promo_penalty: 0.5
+
+    rescore_interval_hours: 24
+    demote_on_7d_decay: 0.40
+
+  # --- Sybil / cluster collapse -------------------------------------------
+  # Critical: without this, "five wallets bought it" can be one person with
+  # five wallets, and the consensus signal - the whole premise of this bot -
+  # becomes trivially fakeable.
+  clustering:
+    enabled: true
+    # Two wallets are treated as the SAME actor if they co-occur in the same
+    # token within this window this often.
+    co_occurrence_window_seconds: 300
+    co_occurrence_min_events: 4
+    co_occurrence_min_jaccard: 0.55
+    # Wallets with a direct SOL transfer between them are always one actor.
+    collapse_on_direct_funding: true
+    # Same funding source (both funded by one wallet/CEX-less hop).
+    collapse_on_shared_funder: true
+    rebuild_interval_hours: 12
+
+# -----------------------------------------------------------------------------
+# CONSENSUS ENGINE - the core idea: several independent good traders, across
+# different platforms, converging on the same token in a short window.
+# -----------------------------------------------------------------------------
+consensus:
+  # Sliding window over which signals are accumulated for a token.
+  window_minutes: 30
+  # Signals older than this decay out entirely.
+  signal_ttl_minutes: 45
+  # Exponential recency decay: a signal's weight halves every N minutes.
+  half_life_minutes: 12
+
+  # How much a signal from each source is worth. On-chain action is weighted
+  # highest because it is money actually moved, not words typed.
+  source_weights:
+    pumpfun: 1.00
+    x: 0.65
+    alphaledger: 0.45
+
+  # Distinct *actors* required, after Sybil collapse. This is the headline
+  # requirement and the main reason alert volume stays low.
+  min_independent_actors: 3
+  # At least this many distinct platforms must contribute.
+  min_distinct_sources: 2
+
+  # Multiplier applied for cross-platform agreement. One source is worth face
+  # value; agreement across two or three is worth disproportionately more,
+  # because the failure modes of the sources are uncorrelated.
+  cross_source_multiplier:
+    "1": 1.0
+    "2": 1.6
+    "3": 2.2
+
+  # Position size scaling: a trader putting $50k in is a stronger statement
+  # than the same trader putting $500 in. Log-scaled and clamped so one whale
+  # cannot single-handedly manufacture a signal.
+  size_factor:
+    reference_usd: 5000
+    min_factor: 0.4
+    max_factor: 2.0
+
+  # Alert tiers.
+  tiers:
+    strong:
+      # Calibrated so that the archetypal case - three good wallets buying
+      # plus two independent X callers, all within the window - clears the
+      # bar, while five wallets with no social corroboration does not.
+      min_conviction: 5.5
+      min_independent_actors: 3
+      min_distinct_sources: 2
+    watch:
+      min_conviction: 3.0
+      min_independent_actors: 2
+      min_distinct_sources: 1
+
+  # Regime filter (from AlphaLedger, if enabled). When majors are risk-off,
+  # meme coins bleed; raise the bar rather than going silent.
+  regime:
+    enabled: true
+    risk_off_conviction_multiplier: 1.5
+
+# -----------------------------------------------------------------------------
+# EXITS - if the bot tells you to buy, it owes you a sell.
+# -----------------------------------------------------------------------------
+exits:
+  enabled: true
+  poll_interval_seconds: 30
+
+  # Smart-money exit: the actors whose buying triggered the alert are selling.
+  # This is the highest-quality exit signal available.
+  smart_money_exit_pct: 0.40      # fraction of the triggering cohort's position sold
+
+  # Mechanical stops, measured from the alert price.
+  stop_loss_pct: 0.45             # down 45% -> exit
+  take_profit_ladder:             # partial exits on the way up
+    - { multiple: 2.0, sell_pct: 0.40 }
+    - { multiple: 4.0, sell_pct: 0.30 }
+    - { multiple: 10.0, sell_pct: 0.20 }
+  # Trailing stop activates once the first ladder rung is hit.
+  trailing_stop_pct: 0.35
+
+  # Safety degradation: LP pulled, authority re-enabled, liquidity collapsing.
+  # Emitted immediately and marked URGENT.
+  emergency_on_liquidity_drop_pct: 0.50
+  emergency_on_safety_regression: true
+
+  # Time stop. A meme coin that has not moved in a day is dead money.
+  max_hold_hours: 24
+
+# -----------------------------------------------------------------------------
+# ALERTS - delivery and volume control
+# -----------------------------------------------------------------------------
+alerts:
+  # Hard ceiling on BUY alerts per day. Exit alerts are never budget-limited -
+  # you always get told to sell.
+  daily_budget: 5
+  # Never alert on the same token twice within this window unless the tier
+  # upgrades (watch -> strong).
+  dedupe_hours: 24
+  # Quiet hours in the timezone below; alerts are suppressed and the best one
+  # is delivered as a digest when quiet hours end. Exit alerts ignore this.
+  timezone: "Europe/Stockholm"
+  quiet_hours: { start: "01:00", end: "07:00" }
+  suppress_watch_tier: true       # only STRONG gets pushed; WATCH goes to /watchlist
+  # If a day produces no STRONG signals, should the bot send the best WATCH
+  # candidates to fill the daily budget? Default false: a quiet day means the
+  # market gave you nothing, and manufacturing an alert to feel busy is how
+  # you end up trading noise. Flip to true if silence bothers you more than
+  # marginal setups do.
+  fill_budget_with_watch: false
+  include_chart_link: true
+  # Which trading app the one-tap link should open.
+  trade_link_provider: "axiom"    # axiom | photon | gmgn | bullx | dexscreener
+
+# -----------------------------------------------------------------------------
+# EXECUTION - alerts-only vs auto-trade. Switchable at runtime from Telegram
+# with /mode, but "live" additionally requires execution.live_mode_armed below
+# AND a private key in the environment. Two locks, deliberately.
+# -----------------------------------------------------------------------------
+execution:
+  # alerts | paper | live
+  #   alerts - notify only, no positions tracked as trades
+  #   paper  - simulate fills at observed prices, full PnL accounting, no money
+  #   live   - real orders on Solana via PumpPortal local (self-signed) txs
+  mode: "paper"
+
+  # Second lock for live trading. /mode live is REFUSED unless this is true.
+  # Set it deliberately, in the file, on the machine. Not from your phone.
+  live_mode_armed: false
+
+  # --- Position sizing ------------------------------------------------------
+  base_position_sol: 0.25
+  max_position_sol: 1.0
+  # Scale size with conviction between the two bounds above.
+  scale_size_with_conviction: true
+  max_concurrent_positions: 5
+
+  # --- Circuit breakers -----------------------------------------------------
+  # All of these halt live trading and notify you. Resume requires /resume.
+  max_daily_loss_sol: 2.0
+  max_daily_trades: 12
+  halt_on_consecutive_losses: 4
+  # Refuse to trade if the wallet drops below this - leaves gas and a floor.
+  min_wallet_balance_sol: 0.05
+
+  # --- Order parameters -----------------------------------------------------
+  slippage_bps: 1000              # 10% - meme coins move fast; tighter fails
+  priority_fee_sol: 0.0005
+  # Refuse a buy if the quoted price impact exceeds this. Protects against
+  # entering something with far less real liquidity than advertised.
+  max_price_impact_pct: 8.0
+
+# -----------------------------------------------------------------------------
+# STORAGE / RUNTIME
+# -----------------------------------------------------------------------------
+storage:
+  db_path: "data/memebot.sqlite"
+  # Keep raw signals this long for backtesting and trader re-scoring.
+  retain_signals_days: 90
+
+runtime:
+  log_level: "INFO"
+  # Shadow mode: run the full pipeline and log what it WOULD have alerted,
+  # without sending anything. Strongly recommended for the first two weeks
+  # while X account scores are still being learned from scratch.
+  shadow_mode: true
+  # Emit a daily summary of what was filtered and why. This is how you learn
+  # whether the thresholds above are too tight or too loose.
+  daily_report: true
+  daily_report_hour: 9
