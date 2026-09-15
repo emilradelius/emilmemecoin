@@ -60,10 +60,20 @@ Look at what the losers had in common in `/report` and the positions table.
 
 ## The metric that actually matters
 
-Not win rate. **Median multiple of closed positions**, which the paper-trading
-history gives you directly. A strategy that wins 30% of the time with a 4×
-median on winners beats one that wins 70% with a 1.2× median, and the second
-one feels much better while you are running it.
+Not win rate — and, at the strategy level, **not median multiple either**.
+
+Meme coins are a positive-skew asset class: a working strategy takes many small
+losses against a few large wins. The typical trade *losing money* is normal and
+expected. Gating on the median would reject every strategy that works here.
+
+The right measure is **profit factor** — gross wins divided by gross losses —
+together with a check that the profit isn't concentrated in one or two trades.
+`python -m memebot.tools.readiness` computes both.
+
+(Median multiple *is* still the right lens for judging an individual wallet in
+`traders.wallets.min_median_multiple`, where the goal is selecting the strictest
+possible shortlist rather than measuring a whole strategy. Different question,
+different metric.)
 
 Give any change at least 30 closed positions before judging it. Below that you
 are reading noise.
@@ -84,3 +94,20 @@ treat any paid promotion as near-disqualifying.
 
 Both can be disabled with `enabled: false`, which makes them exact no-ops
 rather than silently neutral.
+
+## Going live
+
+`python -m memebot.tools.readiness` (or `/readiness` in Telegram) scores your
+paper history against fixed criteria and gives a verdict. It blocks on:
+
+- fewer than 30 closed trades, or under 21 days of history
+- profit factor below 1.30
+- profit concentrated in one trade (>50%) or three trades (>80%)
+- fewer than 20 distinct tokens
+- X account scores not yet learned from graded calls
+- circuit breakers currently tripped
+
+A profitable paper record is not the same thing as evidence of an edge. The
+concentration checks exist because the bot rejects *other* traders for having
+one lucky moonshot, and promoting yourself to live trading on that same record
+would be incoherent.

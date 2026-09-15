@@ -221,6 +221,7 @@ tells you what was filtered and why so you can tune.
 | `/watchlist` | candidates below the alert threshold |
 | `/budget` | X data spend this month |
 | `/traders` | who is being followed and why |
+| `/readiness` | are paper results good enough to go live? |
 | `/set <key> <value>` | change any config value at runtime |
 
 ---
@@ -288,8 +289,25 @@ memebot/
 ```
 
 ```bash
-pip install -r requirements-dev.txt && pytest    # 113 tests
+pip install -r requirements-dev.txt && pytest    # 126 tests
 ```
+
+### Before you trade real money
+
+```bash
+python -m memebot.tools.readiness     # or /readiness in Telegram
+```
+
+Scores your paper history and gives a go/no-go verdict. It exists because
+"the bot is up 30% this week" is not evidence — meme coins are volatile enough
+that a coin-flip strategy produces that regularly. It blocks on small sample
+size, short history, weak profit factor, profit concentrated in one or two
+trades, too few distinct tokens, and X scores that haven't been learned yet.
+
+A history making **+11 SOL can be rejected while one making +1.4 SOL passes**,
+if the first one's profit came from a single lucky trade. That's deliberate:
+the bot rejects other wallets for exactly that pattern, so applying a looser
+standard to yourself would be incoherent.
 
 ---
 

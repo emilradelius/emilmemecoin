@@ -266,6 +266,20 @@ class Store:
             ).fetchall()
         return [self._row_to_position(r) for r in rows]
 
+    def closed_positions(self, since: float = 0.0,
+                         mode: str | None = None) -> list[Position]:
+        """Closed positions, oldest first. Used by the readiness report to
+        judge whether paper results justify trading live."""
+        sql = "SELECT * FROM positions WHERE closed_at IS NOT NULL AND closed_at>=?"
+        params: list[Any] = [since]
+        if mode:
+            sql += " AND mode=?"
+            params.append(mode)
+        sql += " ORDER BY closed_at"
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [self._row_to_position(r) for r in rows]
+
     def position_for_mint(self, mint: str) -> Position | None:
         with self._lock:
             r = self._conn.execute(

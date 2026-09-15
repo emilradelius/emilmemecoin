@@ -41,6 +41,7 @@ from .enrich.solprice import SolPrice
 from .execution.manager import ExecutionManager
 from .exits import ExitMonitor
 from .models import Candidate, Position, Side, Signal, Source, Tier
+from .readiness import ReadinessAssessor
 from .scoring.clustering import ClusterBuilder, ClusterMap
 from .scoring.consensus import ConsensusEngine
 from .scoring.discovery import WalletDiscovery
@@ -489,6 +490,7 @@ class MemeBot:
                 "/report - send the daily report now\n"
                 "/pause, /unpause - stop/start processing signals\n"
                 "/shadow [on|off] - shadow mode\n"
+                "/readiness - are paper results good enough to go live?\n"
                 "/set &lt;key&gt; &lt;value&gt; - change a config value at runtime"
             )
 
@@ -593,6 +595,11 @@ class MemeBot:
                 self.shadow = args[0].lower() == "on"
             return f"Shadow mode is {'on' if self.shadow else 'off'}."
 
+        async def readiness_cmd(args: list[str]) -> str:
+            mode = args[0] if args and args[0] in ("paper", "live") else "paper"
+            assessor = ReadinessAssessor(self.cfg, self.store)
+            return assessor.render(assessor.assess(mode=mode), html=True)
+
         async def report_cmd(_args: list[str]) -> str:
             await self.send_daily_report()
             return ""
@@ -624,6 +631,7 @@ class MemeBot:
             ("traders", traders_cmd), ("watchlist", watchlist_cmd),
             ("pause", pause_cmd), ("unpause", unpause_cmd),
             ("shadow", shadow_cmd), ("report", report_cmd), ("set", set_cmd),
+            ("readiness", readiness_cmd),
         ):
             t.register(name, fn)
 
@@ -644,6 +652,7 @@ class MemeBot:
             "budget": "X data spend this month",
             "traders": "Who is being followed",
             "report": "Send the daily report",
+            "readiness": "Are paper results good enough to go live?",
             "help": "All commands",
         })
 
