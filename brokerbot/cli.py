@@ -27,7 +27,7 @@ from .backtest.walkforward import WalkForwardValidator
 from .costs import PRESETS
 from .data.base import BarSource
 from .data.csv_source import CsvBarSource
-from .data.synthetic import random_walk
+from .data.synthetic import ASSET_PRESETS, random_walk
 from .models import Bar
 from .live import BarStore, LiveRunner
 from .strategy.library import REGISTRY
@@ -42,12 +42,24 @@ GRIDS = {
 }
 
 
+def _synthetic_kwargs(args) -> dict:
+    """Preset settings, with an explicit --trend still winning.
+
+    ``--trend`` defaults to None rather than 0.0 so that leaving it alone
+    means "whatever the preset says" instead of silently flattening the
+    momentum a preset deliberately includes.
+    """
+    kwargs: dict = {"bars": args.bars, "seed": args.seed}
+    if getattr(args, "preset", None):
+        kwargs["preset"] = args.preset
+    if args.trend is not None:
+        kwargs["trend_strength"] = args.trend
+    return kwargs
+
+
 def _load_bars(args) -> list[Bar]:
     if args.synthetic:
-        return random_walk(
-            args.symbol or "SYNTH", bars=args.bars, seed=args.seed,
-            trend_strength=args.trend,
-        )
+        return random_walk(args.symbol or "SYNTH", **_synthetic_kwargs(args))
     if not args.csv:
         raise SystemExit("provide --csv PATH or --synthetic")
     src = CsvBarSource(args.csv)
@@ -119,6 +131,12 @@ def cmd_noise(args) -> int:
     true edge is exactly zero. Whatever spread of returns this prints is the
     performance the method manufactures from nothing - and any real backtest
     result has to stand clearly outside it to mean anything.
+
+    ``--preset`` picks the asset class to imitate, because the baseline is
+    only meaningful if the synthetic paths resemble what you are really
+    trading: a strategy scored against 1.2% daily equity noise will look far
+    too good on crypto. Drift and momentum are forced to zero here whatever
+    the preset carries, since a baseline with an edge in it is not a baseline.
     """
     cls = REGISTRY.get(args.strategy)
     if cls is None:
@@ -127,7 +145,10 @@ def cmd_noise(args) -> int:
     results: list[float] = []
     beats = 0
     for seed in range(args.runs):
-        bars = random_walk("NOISE", bars=args.bars, seed=seed, drift=0.0)
+        bars = random_walk(
+            "NOISE", **{**_synthetic_kwargs(args), "seed": seed,
+                        "drift": 0.0, "trend_strength": args.trend or 0.0},
+        )
         rep = engine.compare_to_benchmark(cls(), bars)
         results.append(rep.strategy.total_return)
         beats += bool(rep.beats_benchmark)
@@ -400,8 +421,13 @@ def main() -> int:
         p.add_argument("--synthetic", action="store_true")
         p.add_argument("--bars", type=int, default=1500)
         p.add_argument("--seed", type=int, default=1)
-        p.add_argument("--trend", type=float, default=0.0,
-                       help="synthetic trend strength; 0 = efficient market")
+        p.add_argument("--trend", type=float, default=None,
+                       help="synthetic trend strength; 0 = efficient market. "
+                            "Default: whatever --preset specifies.")
+        p.add_argument("--preset", choices=sorted(ASSET_PRESETS),
+                       help="asset class for synthetic data. The noise "
+                            "baseline is only valid for the class it imitates "
+                            "- equity settings badly understate crypto.")
         p.add_argument("--costs", default="nordic_equities",
                        choices=sorted(PRESETS))
         p.add_argument("--cash", type=float, default=100_000.0)
