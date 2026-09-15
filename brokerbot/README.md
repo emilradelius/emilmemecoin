@@ -108,6 +108,113 @@ Nothing else in this repo will save you as much money as internalising that.
 
 ---
 
+## News
+
+The bot reads financial news and uses it to trade — but **not** the way you'd
+expect, and the difference is the whole design.
+
+### You cannot win the speed race, so don't enter it
+
+Benzinga delivers machine-readable news to institutional systems over WebSocket
+in about **25 milliseconds**. By the time a story reaches a public RSS feed, the
+first move is over and whoever traded it was faster than you will ever be. A
+retail bot racing to react to headlines is systematically buying from people
+with better latency and better information.
+
+What *is* reachable at retail speed is **post-earnings-announcement drift** —
+prices continuing to move in the direction of an earnings surprise for weeks
+afterward. It's among the most replicated anomalies in finance, precisely
+because it plays out slowly enough to catch.
+
+So `news_drift` deliberately does the opposite of what a news bot is expected to:
+
+1. A material, novel, directional story arrives. **It does not trade.**
+2. It waits for the market to confirm — price must move in the story's direction.
+3. Only then does it enter, holding for a drift window measured in *days*.
+
+**Step 2 is what makes it robust to the classifier being wrong.** A misread
+headline produces no confirming move, so no trade follows. The market gets a
+veto over the model:
+
+| Scenario | Result |
+|---|---|
+| Bullish story, market confirms | **Trades** |
+| Bullish story, market shrugs | No trade |
+| Bullish story, price *falls* (classifier wrong) | **No trade** |
+| Story older than TTL | No trade |
+
+### Where Claude fits
+
+Judging whether a headline carries new, material, directional information is a
+language problem. Keyword rules can't separate "Volvo beats estimates" from
+"Volvo *expected* to beat estimates" from "Why Volvo's beat doesn't matter" —
+and those imply completely different actions.
+
+Claude scores each story on **materiality**, **novelty**, **direction**,
+**surprise** and **confidence**. It is never asked whether to buy. Sizing,
+risk and timing stay in code, where they're testable and deterministic. An LLM
+asked "should I buy this?" gives a plausible answer every time — including when
+the honest answer is that nothing here is tradeable.
+
+The novelty score does the heaviest lifting. Most financial news is recap:
+previews of scheduled events, summaries of yesterday's move, "here's why the
+stock fell". Those are correctly scored near zero even when the underlying
+event mattered.
+
+### Cost control is structural
+
+Pipeline order is chosen for cost as much as correctness:
+
+```
+ingest → deduplicate → resolve entity → classify (LLM) → signal
+         ~free, most     ~free, most      only survivors pay
+         dropped         dropped
+```
+
+One wire story reaches you through a dozen aggregators. Collapsing those first
+is both a correctness fix (twelve reprints are *not* twelve confirmations) and
+the largest saving in the system. Running the model first — the obvious
+ordering — costs roughly **50× more for identical output**.
+
+Per 1,000 classifications, with prompt caching on the stable rubric:
+
+| Model | Cost |
+|---|---|
+| `claude-opus-5` (default) | $6.03 |
+| `claude-sonnet-5` | $2.41 |
+| `claude-haiku-4-5` | $1.20 |
+
+A monthly cap is enforced and **persisted to disk** — an in-memory cap resets on
+every deploy and crash, which means it never actually binds. Set a `watchlist`
+and nothing narrows spend more effectively than not caring about most of the
+market.
+
+### The look-ahead trap that ruins news backtests
+
+News backtesting is uniquely prone to look-ahead bias, and timestamps are why.
+A story's `published_at` gets revised — wires correct them, aggregators backfill
+them, some APIs return the *latest revision's* time. Backtest on that and you
+routinely trade on information hours before anyone could have had it, producing
+spectacular and entirely fictional returns.
+
+So every item records **`first_seen_at`** — when our own ingester saw it —
+separately and immutably, and the backtester keys on that. It's strictly later
+than real publication, which biases results *against* the strategy. The safe
+direction.
+
+### Setup
+
+```bash
+export ANTHROPIC_API_KEY=...       # or: ant auth login
+python -m brokerbot.cli backtest --strategy news_drift --csv data/volvo.csv
+```
+
+Free RSS feeds are configured by default, including Nordic sources
+(Nasdaq OMX, Placera, DI Börs) — Swedish-language coverage of Stockholm
+listings often breaks before the English wires pick it up. Extend the
+instrument universe in `news/entities.py` with your own watchlist; the
+resolver is only as good as that list.
+
 ## Walk-forward validation
 
 Try 200 parameter combinations on ten years of data and the best one looks
@@ -152,7 +259,7 @@ unadjusted splits. A Yahoo source is included but was written blind (this
 sandbox's proxy blocked it), so verify it before relying on it.
 
 ```bash
-pip install -r requirements-dev.txt && pytest    # 172 tests, both projects
+pip install -r requirements-dev.txt && pytest    # 210 tests, both projects
 ```
 
 ---
@@ -166,6 +273,7 @@ brokerbot/
   data/           CSV, synthetic, Yahoo, and a validator that catches bad data
   strategy/       interface + SMA crossover, momentum, mean reversion, buy & hold
   backtest/       engine (next-bar fills), metrics (benchmark-first), walk-forward
+  news/           RSS ingest, dedup, entity resolution, Claude classifier, pipeline
   brokers/        paper, Saxo, IBKR, eToro
   cli.py
 ```
@@ -182,6 +290,11 @@ brokerbot/
 - **No broker adapter has been run against a live API.** The sandbox had no
   credentials and blocked outbound calls. They're written against documented
   shapes; `broker --check` reports exactly which call fails.
+- **News entity resolution is only as good as the instrument list.** The
+  default universe is ~16 names. A story about a company not in it is invisible.
+- **Dedup is lexical, not semantic.** "Third-quarter profit tops forecasts" and
+  "Q3 profit beats estimates" share almost no word pairs and won't merge. That
+  costs a duplicate classification — the cheap direction to fail in.
 - **Long-only.** Shorting has borrow costs and assignment risk this doesn't
   model, so signal weights are clamped to [0, 1].
 - **Single instrument at a time.** No portfolio construction, correlation, or

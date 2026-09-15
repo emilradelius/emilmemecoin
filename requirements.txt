@@ -4,6 +4,9 @@ PyYAML>=6,<7
 python-dotenv>=1,<2
 base58>=2.1,<3
 
+# News classification for brokerbot (optional - the rest runs without it)
+anthropic>=1.5,<2
+
 # Telegram is spoken directly over the Bot API via aiohttp - no framework
 # dependency. Only needed for live auto-trading (execution.mode: live):
 # Install with:  pip install -r requirements-live.txt

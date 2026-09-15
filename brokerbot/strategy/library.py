@@ -132,8 +132,11 @@ class MeanReversion(Strategy):
         return None
 
 
+from .news_drift import NewsDriftStrategy  # noqa: E402
+
 REGISTRY: dict[str, type[Strategy]] = {
     "buy_and_hold": BuyAndHold,
+    "news_drift": NewsDriftStrategy,
     "sma_crossover": SmaCrossover,
     "momentum": Momentum,
     "mean_reversion": MeanReversion,
