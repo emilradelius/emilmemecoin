@@ -63,6 +63,34 @@ class SmaCrossover(Strategy):
         return Signal(symbol, 0.0, f"SMA{self.fast} below SMA{self.slow}")
 
 
+class PriceVsSma(Strategy):
+    """Long while price closes above a single moving average, flat below.
+
+    The rule from the widely-shared "AI trading" tutorials: buy when the close
+    crosses above the SMA-50, sell when it crosses below. Implemented exactly
+    as described, including the close-confirmation, so its published results
+    can be checked rather than argued about.
+    """
+
+    name = "price_vs_sma"
+
+    def __init__(self, window: int = 50) -> None:
+        super().__init__(window=window)
+        self.window = int(window)
+
+    @property
+    def warmup(self) -> int:
+        return self.window
+
+    def on_bar(self, symbol: str, history: list[Bar]) -> Signal | None:
+        sma = _sma(history, self.window)
+        if sma is None:
+            return None
+        if history[-1].close > sma:
+            return Signal(symbol, 1.0, f"close above SMA{self.window}")
+        return Signal(symbol, 0.0, f"close below SMA{self.window}")
+
+
 class Momentum(Strategy):
     """Long while trailing return over ``lookback`` bars is positive.
 
@@ -139,5 +167,6 @@ REGISTRY: dict[str, type[Strategy]] = {
     "news_drift": NewsDriftStrategy,
     "sma_crossover": SmaCrossover,
     "momentum": Momentum,
+    "price_vs_sma": PriceVsSma,
     "mean_reversion": MeanReversion,
 }

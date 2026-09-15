@@ -38,6 +38,7 @@ GRIDS = {
     "momentum": {"lookback": [21, 63, 126, 252], "threshold": [0.0, 0.02, 0.05]},
     "mean_reversion": {"window": [10, 20, 50], "entry_z": [-1.0, -1.5, -2.0]},
     "buy_and_hold": {},
+    "price_vs_sma": {"window": [20, 50, 100, 200]},
 }
 
 
@@ -144,6 +145,36 @@ def cmd_noise(args) -> int:
         f"\nA backtest on real data only means something if it clears the 90th "
         f"percentile here ({results[int(0.9 * len(results))]:+.1%}). Anything "
         f"below that is indistinguishable from noise."
+    )
+    return 0
+
+
+def cmd_pine(args) -> int:
+    from .pine import export, traps_text
+
+    if args.traps:
+        print(traps_text())
+        return 0
+    cls = REGISTRY.get(args.strategy)
+    if cls is None:
+        raise SystemExit(f"unknown strategy. Options: {', '.join(REGISTRY)}")
+    try:
+        script = export(cls(), PRESETS[args.costs], initial_capital=args.cash)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    if args.out:
+        Path(args.out).write_text(script)
+        print(f"wrote {args.out}")
+    else:
+        print(script)
+    print(
+        "\nPaste into TradingView's Pine Editor, add to the chart, then compare "
+        "the Strategy Tester's numbers against:\n"
+        f"  python -m brokerbot.cli backtest --strategy {args.strategy} "
+        f"--csv <same data> --costs {args.costs}\n"
+        "Material disagreement means one of them is wrong. "
+        "`--traps` lists the usual reasons.",
+        file=__import__("sys").stderr,
     )
     return 0
 
@@ -417,6 +448,15 @@ def main() -> int:
     p.add_argument("--report", action="store_true",
                    help="assess a finished or in-progress trial and exit")
     p.set_defaults(func=cmd_trial)
+
+    p = sub.add_parser("pine")
+    p.add_argument("--strategy", default="price_vs_sma", choices=sorted(REGISTRY))
+    p.add_argument("--costs", default="nordic_equities", choices=sorted(PRESETS))
+    p.add_argument("--cash", type=float, default=100_000.0)
+    p.add_argument("--out")
+    p.add_argument("--traps", action="store_true",
+                   help="list what inflates TradingView Strategy Tester results")
+    p.set_defaults(func=cmd_pine)
 
     p = sub.add_parser("broker")
     p.add_argument("--check", required=True,

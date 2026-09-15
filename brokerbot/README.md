@@ -215,6 +215,45 @@ listings often breaks before the English wires pick it up. Extend the
 instrument universe in `news/entities.py` with your own watchlist; the
 resolver is only as good as that list.
 
+## Cross-checking against TradingView
+
+TradingView's Strategy Tester is a second, independent implementation — which
+makes it a cheap bug detector. **Two backtesters disagreeing on the same rule
+and the same bars means one of them is wrong**, and finding out which teaches
+you more than either number alone.
+
+```bash
+python -m brokerbot.cli pine --strategy price_vs_sma --costs nordic_equities
+python -m brokerbot.cli pine --traps        # what inflates Tester results
+```
+
+The generated Pine pins four things the Tester gets wrong by default:
+
+| Setting | Default | Why it matters |
+|---|---|---|
+| `process_orders_on_close` | `true` | fills at the signal bar's close — a price you couldn't trade |
+| `commission_value` | **0** | the single biggest source of fake profit |
+| `slippage` | **0** | same |
+| `calc_on_every_tick` | varies | makes results depend on when you loaded the chart |
+
+Strategies driven by external data (news, order flow) **cannot** be exported —
+Pine only sees the chart, and silently shipping a chart-only approximation
+would make the comparison meaningless. The exporter refuses rather than
+pretending.
+
+### Known ways the Strategy Tester flatters a strategy
+
+- **Non-standard chart types** (Heikin Ashi, Renko, Kagi) produce fantasy
+  fills — it trades a synthetic candle's price that never existed. This alone
+  turns losing strategies into spectacular winners.
+- **`request.security()` without `lookahead=barmerge.lookahead_off`** returns
+  higher-timeframe data before it closed. The classic multi-timeframe
+  look-ahead bug.
+- **Repainting indicators** backtest perfectly and fail live. If the signal
+  moves when you reload the chart, it repaints.
+- **Bar limits by plan tier** — your "ten year" backtest may silently cover
+  far less.
+
 ## Walk-forward validation
 
 Try 200 parameter combinations on ten years of data and the best one looks
@@ -259,7 +298,7 @@ unadjusted splits. A Yahoo source is included but was written blind (this
 sandbox's proxy blocked it), so verify it before relying on it.
 
 ```bash
-pip install -r requirements-dev.txt && pytest    # 232 tests, both projects
+pip install -r requirements-dev.txt && pytest    # 259 tests, both projects
 ```
 
 ---
@@ -297,6 +336,7 @@ brokerbot/
   live.py         the live runner: cycles, reconciliation, heartbeat, kill switch
   trial.py        7-day trial scoring - operational criteria only
   brokers/        paper, Saxo, IBKR, eToro
+  pine.py         export strategies to Pine Script for cross-validation
   cli.py
 ```
 
