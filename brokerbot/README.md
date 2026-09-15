@@ -259,10 +259,30 @@ unadjusted splits. A Yahoo source is included but was written blind (this
 sandbox's proxy blocked it), so verify it before relying on it.
 
 ```bash
-pip install -r requirements-dev.txt && pytest    # 210 tests, both projects
+pip install -r requirements-dev.txt && pytest    # 232 tests, both projects
 ```
 
 ---
+
+## Running a demo trial
+
+```bash
+python -m brokerbot.cli preflight --broker saxo --symbols VOLV-B.ST   # verify wiring
+python -m brokerbot.cli trial --broker saxo --symbols VOLV-B.ST --days 7
+python -m brokerbot.cli trial --report                                 # verdict
+```
+
+Dry-run by default; add `--live-orders` to actually send them to the demo
+account. A heartbeat file, kill switch (`touch data/live/STOP`), position
+reconciliation against the broker, and per-cycle logging are all built in.
+
+**A week tells you the plumbing works, not that the strategy is profitable** —
+the drift strategy holds for 20 days, so almost nothing completes a round trip
+in seven. The trial report says this explicitly rather than letting a P&L
+figure be mistaken for evidence.
+
+Full runbook, including the Saxo token problem that otherwise kills a
+multi-day run on day one: **[docs/SEVEN_DAY_TRIAL.md](../docs/SEVEN_DAY_TRIAL.md)**
 
 ## Layout
 
@@ -274,6 +294,8 @@ brokerbot/
   strategy/       interface + SMA crossover, momentum, mean reversion, buy & hold
   backtest/       engine (next-bar fills), metrics (benchmark-first), walk-forward
   news/           RSS ingest, dedup, entity resolution, Claude classifier, pipeline
+  live.py         the live runner: cycles, reconciliation, heartbeat, kill switch
+  trial.py        7-day trial scoring - operational criteria only
   brokers/        paper, Saxo, IBKR, eToro
   cli.py
 ```

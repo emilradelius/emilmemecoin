@@ -6,6 +6,9 @@
     python -m brokerbot.cli walkforward --synthetic --strategy sma_crossover
     python -m brokerbot.cli noise --strategy sma_crossover
     python -m brokerbot.cli broker --check paper
+    python -m brokerbot.cli preflight --broker saxo --symbols VOLV-B.ST
+    python -m brokerbot.cli trial --broker saxo --symbols VOLV-B.ST,ERIC-B.ST --days 7
+    python -m brokerbot.cli trial --report
 """
 
 from __future__ import annotations
@@ -15,7 +18,8 @@ import asyncio
 import logging
 import statistics
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from .backtest.engine import BacktestEngine
 from .backtest.metrics import render
@@ -25,7 +29,9 @@ from .data.base import BarSource
 from .data.csv_source import CsvBarSource
 from .data.synthetic import random_walk
 from .models import Bar
+from .live import BarStore, LiveRunner
 from .strategy.library import REGISTRY
+from .trial import TrialTracker
 
 GRIDS = {
     "sma_crossover": {"fast": [5, 10, 20, 50], "slow": [30, 60, 100, 200]},
@@ -186,6 +192,172 @@ def cmd_broker(args) -> int:
     return asyncio.run(check())
 
 
+
+
+def _build_broker(name: str, args):
+    """Construct a broker from the environment. Demo/simulation by default."""
+    import os
+    if name == "paper":
+        from .brokers.paper import PaperBroker
+        return PaperBroker(PRESETS[args.costs], starting_cash=args.cash)
+    if name == "saxo":
+        from .brokers.saxo import SaxoBroker
+        return SaxoBroker(
+            os.getenv("SAXO_TOKEN") or None,
+            simulation=True,
+            refresh_token=os.getenv("SAXO_REFRESH_TOKEN"),
+            client_id=os.getenv("SAXO_CLIENT_ID"),
+            client_secret=os.getenv("SAXO_CLIENT_SECRET"),
+            token_store=Path(args.state_dir) / "saxo_tokens.json",
+        )
+    if name == "ibkr":
+        from .brokers.ibkr import IbkrBroker
+        return IbkrBroker()
+    if name == "etoro":
+        from .brokers.etoro import EtoroBroker
+        key = os.getenv("ETORO_API_KEY", "")
+        if not key:
+            raise SystemExit("set ETORO_API_KEY from https://builders.etoro.com/")
+        return EtoroBroker(key, demo=True)
+    raise SystemExit(f"unknown broker {name!r}")
+
+
+def _build_news(args):
+    if not args.news:
+        return None
+    import os
+    if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
+        print("--news needs ANTHROPIC_API_KEY (or `ant auth login`). "
+              "Continuing without news.\n")
+        return None
+    from .news.classify import NewsClassifier
+    from .news.pipeline import NewsPipeline
+    symbols = {s.strip() for s in args.symbols.split(",") if s.strip()}
+    return NewsPipeline(
+        classifier=NewsClassifier(
+            monthly_usd_cap=args.news_cap,
+            state_path=None,
+        ),
+        watchlist=symbols or None,
+    )
+
+
+def cmd_preflight(args) -> int:
+    """Verify every moving part before committing a week to the run."""
+    import os
+
+    print("Preflight - checking each dependency the trial needs.\n")
+    problems: list[str] = []
+
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    print(f"[ok]   symbols: {', '.join(symbols) or '(none)'}")
+    if not symbols:
+        problems.append("no symbols given (--symbols VOLV-B.ST,ERIC-B.ST)")
+
+    try:
+        broker = _build_broker(args.broker, args)
+        print(f"[ok]   broker adapter: {broker.name}")
+    except (SystemExit, ValueError) as exc:
+        print(f"[FAIL] broker: {exc}")
+        return 1
+
+    async def checks() -> None:
+        connected = await broker.connect()
+        print(f"[{'ok' if connected else 'FAIL'}]   broker connect")
+        if not connected:
+            problems.append("broker would not connect - check credentials")
+        else:
+            acct = await broker.account()
+            print(f"[ok]   account: {acct.equity:,.2f} {acct.currency}")
+            for sym in symbols:
+                price = await broker.last_price(sym)
+                if price:
+                    print(f"[ok]   price {sym}: {price}")
+                else:
+                    print(f"[FAIL] no price for {sym}")
+                    problems.append(f"no price available for {sym}")
+        await broker.close()
+
+    asyncio.run(checks())
+
+    if args.broker == "saxo":
+        if os.getenv("SAXO_REFRESH_TOKEN"):
+            print("[ok]   Saxo OAuth2 refresh configured - survives multi-day runs")
+        else:
+            print("[WARN] static Saxo token: expires within 24h, so a 7-day "
+                  "run will stop after day one. Configure the refresh flow.")
+            problems.append("static Saxo token cannot survive 7 days")
+
+    news = _build_news(args)
+    if args.news:
+        print(f"[{'ok' if news else 'WARN'}]   news pipeline")
+
+    print()
+    if problems:
+        print("Preflight found problems:")
+        for p in problems:
+            print(f"  - {p}")
+        print("\nFix these first. A week-long run on a broken setup wastes a week.")
+        return 1
+    print("Preflight clean. Start the trial with:")
+    print(f"  python -m brokerbot.cli trial --broker {args.broker} "
+          f"--symbols {args.symbols} --days {getattr(args, 'days', 7)}")
+    return 0
+
+
+def cmd_trial(args) -> int:
+    tracker = TrialTracker(args.state_dir, cycle_seconds=args.cycle_seconds,
+                           days=args.days)
+
+    if args.report:
+        print(tracker.render(tracker.assess()))
+        return 0 if tracker.assess().operationally_sound else 1
+
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    if not symbols:
+        raise SystemExit("--symbols is required, e.g. --symbols VOLV-B.ST")
+
+    cls = REGISTRY.get(args.strategy)
+    if cls is None:
+        raise SystemExit(f"unknown strategy. Options: {', '.join(REGISTRY)}")
+
+    broker = _build_broker(args.broker, args)
+    history = CsvBarSource(args.csv) if args.csv else None
+    if history is None:
+        print("No --csv history given. Strategies with a warmup window will "
+              "not signal until enough live days accumulate.\n")
+
+    runner = LiveRunner(
+        broker, cls(), symbols,
+        costs=PRESETS[args.costs],
+        bar_store=BarStore(Path(args.state_dir) / "bars.json"),
+        history_source=history,
+        news_pipeline=_build_news(args),
+        cycle_seconds=args.cycle_seconds,
+        dry_run=not args.live_orders,
+        state_dir=args.state_dir,
+        on_event=tracker.record,
+    )
+
+    if args.live_orders:
+        print("*** --live-orders: real orders will be sent to the DEMO "
+              "account. Ctrl-C or `touch "
+              f"{Path(args.state_dir) / 'STOP'}` to stop. ***\n")
+    else:
+        print("Dry-run: orders are logged, not sent. Add --live-orders to "
+              "place them on the demo account.\n")
+
+    started = tracker.start(dry_run=not args.live_orders)
+    until = started + timedelta(days=args.days)
+    try:
+        asyncio.run(runner.run(until=until))
+    except KeyboardInterrupt:
+        print("\ninterrupted")
+
+    print("\n" + tracker.render(tracker.assess()))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="brokerbot", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -219,6 +391,32 @@ def main() -> int:
     p.add_argument("--strategy", default="sma_crossover", choices=sorted(REGISTRY))
     p.add_argument("--runs", type=int, default=100)
     p.set_defaults(func=cmd_noise)
+
+    def live_common(p):
+        p.add_argument("--broker", default="paper",
+                       choices=["paper", "saxo", "ibkr", "etoro"])
+        p.add_argument("--symbols", default="")
+        p.add_argument("--csv", help="historical bars to seed the strategy warmup")
+        p.add_argument("--strategy", default="news_drift", choices=sorted(REGISTRY))
+        p.add_argument("--costs", default="nordic_equities", choices=sorted(PRESETS))
+        p.add_argument("--cash", type=float, default=100_000.0)
+        p.add_argument("--state-dir", default="data/live")
+        p.add_argument("--cycle-seconds", type=float, default=900.0)
+        p.add_argument("--news", action="store_true", help="enable news classification")
+        p.add_argument("--news-cap", type=float, default=10.0,
+                       help="monthly USD cap for classification")
+
+    p = sub.add_parser("preflight"); live_common(p)
+    p.add_argument("--days", type=int, default=7)
+    p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("trial"); live_common(p)
+    p.add_argument("--days", type=int, default=7)
+    p.add_argument("--live-orders", action="store_true",
+                   help="actually send orders to the demo account")
+    p.add_argument("--report", action="store_true",
+                   help="assess a finished or in-progress trial and exit")
+    p.set_defaults(func=cmd_trial)
 
     p = sub.add_parser("broker")
     p.add_argument("--check", required=True,
