@@ -40,6 +40,15 @@
     <!-- No --live-orders. This job must never be able to send a real order;
          adding that flag here would mean a reboot is enough to start trading. -->
 
+    <!-- Without this, Python buffers stdout when it is not a terminal and
+         trial.log sits empty for hours while the run is perfectly healthy.
+         An empty log is indistinguishable from a dead job. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
 
