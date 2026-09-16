@@ -68,17 +68,31 @@ class YahooBarSource(BarSource):
 
     # ------------------------------------------------------------------ fetch
 
-    def _url(self, symbol: str, *, range_: str, interval: str) -> str:
-        query = urllib.parse.urlencode({
-            "range": range_,
+    def _url(self, symbol: str, *, range_: str, interval: str,
+             start: datetime | None = None, end: datetime | None = None) -> str:
+        params: dict[str, str] = {
             "interval": interval,
             "includeAdjustedClose": "true",
-        })
-        return f"{CHART_URL}{urllib.parse.quote(symbol)}?{query}"
+        }
+        # An explicit window and `range` are mutually exclusive, and `range`
+        # wins when both are sent - which is how a request for twenty years of
+        # daily bars quietly comes back as monthly ones.
+        if start is not None:
+            params["period1"] = str(int(start.replace(tzinfo=timezone.utc).timestamp()))
+            params["period2"] = str(int(
+                (end or datetime.now(timezone.utc).replace(tzinfo=None))
+                .replace(tzinfo=timezone.utc).timestamp()))
+        else:
+            params["range"] = range_
+        return f"{CHART_URL}{urllib.parse.quote(symbol)}?{urllib.parse.urlencode(params)}"
 
-    def _fetch_sync(self, symbol: str, *, range_: str, interval: str) -> dict:
+    def _fetch_sync(self, symbol: str, *, range_: str, interval: str,
+                    start: datetime | None = None,
+                    end: datetime | None = None) -> dict:
         request = urllib.request.Request(
-            self._url(symbol, range_=range_, interval=interval), headers=_HEADERS
+            self._url(symbol, range_=range_, interval=interval,
+                      start=start, end=end),
+            headers=_HEADERS,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
@@ -117,7 +131,10 @@ class YahooBarSource(BarSource):
         """
         range_ = str(kwargs.get("range", "2y"))
         interval = str(kwargs.get("interval", "1d"))
-        result = self._fetch_sync(symbol, range_=range_, interval=interval)
+        result = self._fetch_sync(
+            symbol, range_=range_, interval=interval,
+            start=kwargs.get("start"), end=kwargs.get("end"),
+        )
         self._remember_currency(symbol, result)
         return self._to_bars(symbol, result)
 

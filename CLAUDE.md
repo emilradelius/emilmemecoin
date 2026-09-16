@@ -122,6 +122,49 @@ worth doing - it is just not the same thing.
 
 `PaperBroker` takes an optional `quotes` source (`data/yahoo.py`, an undocumented free endpoint) so the live path can be rehearsed without an account. Two limits are deliberate and should stay: `supports_live` remains `False`, because a free feed must never size a real order; and `last_price` caches what it fetched so the fill uses the same price the signal was computed from, rather than a quote that arrived in between.
 
+### Time-series momentum - the one thing that survived (2026-09-16)
+
+`strategy/tsmom.py` implements Moskowitz, Ooi & Pedersen to spec: sign of the
+past 12-month return, position size inversely proportional to ex-ante
+volatility (EWMA of daily returns, centre of mass 60 days, annualised by 261,
+estimate from t-1 applied to t), monthly rebalance, long and short, costs
+charged on turnover.
+
+This is also the strategy the repo previously tested **wrongly**. Running
+momentum on one stock against buy-and-hold of that stock asks whether
+trend-following beats owning Volvo, which is not the claim. The claim is about
+a diversified, volatility-scaled, long/short portfolio across asset classes.
+
+Measured on 28 futures across 6 asset classes, 2016-2026 - entirely after the
+paper was published, so genuinely out of sample:
+
+| | CAGR | vol | Sharpe | maxDD |
+|---|---|---|---|---|
+| SPY buy & hold | +16.6% | 16.1% | 1.04 | 23.9% |
+| TSMOM alone (10bps) | +4.8% | 11.7% | 0.41 | 20.4% |
+| **70/30 SPY/TSMOM** | **+13.0%** | **11.6%** | **1.12** | **13.0%** |
+
+**It does not beat buy-and-hold and is not meant to.** Its correlation with
+SPY is -0.05, and that is the product: blended at 30% it cuts maximum drawdown
+from 24% to 13% while improving Sharpe. Diversification is visible in the
+components too - every individual asset class scores Sharpe 0.00-0.29 and the
+combination scores 0.35, which is the effect working as described rather than
+one lucky sleeve.
+
+Three honest caveats, in order of importance:
+
+1. **t-statistic is 1.21.** The usual bar is 2.0. Nine years is not enough to
+   rule out chance, and this must not be presented as established.
+2. A random-sign control beat it in 12% of 200 runs. Far better than TJR's 87%,
+   but not conclusive.
+3. The 12-month lookback works (+4.1%) while 1, 3, 6 and 24 months do not.
+   That matches the paper, which is mild evidence it is real rather than fitted
+   - but it is also exactly what cherry-picking looks like.
+
+The robust findings here are the near-zero correlation and the drawdown
+reduction, both estimated far more precisely than the mean return. If anything
+in this repo is worth acting on, it is the blend, not the standalone strategy.
+
 ### TJR / ICT sweep-and-shift (measured 2026-09-16)
 
 `strategy/tjr.py` mechanises the model taught by TJR (Tyler J. Riches):

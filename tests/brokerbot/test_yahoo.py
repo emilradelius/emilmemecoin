@@ -9,6 +9,7 @@ null-padded rows Yahoo emits for exchange holidays.
 from __future__ import annotations
 
 import urllib.error
+from datetime import datetime
 
 import pytest
 
@@ -267,3 +268,18 @@ def test_bar_dates_do_not_depend_on_the_machines_timezone(monkeypatch):
     monkeypatch.undo()
     time.tzset()
     assert len(set(dates)) == 1, f"date moved with the timezone: {dates}"
+
+
+def test_an_explicit_window_replaces_range_rather_than_joining_it():
+    """Yahoo honours `range` over `period1`/`period2` when both are sent, and
+    silently downsamples: a request for twenty years of *daily* bars comes
+    back as ~250 monthly ones, which looks like a successful fetch."""
+    src = YahooBarSource()
+    windowed = src._url("SPY", range_="max", interval="1d",
+                        start=datetime(2000, 1, 1), end=datetime(2020, 1, 1))
+    assert "period1=" in windowed and "period2=" in windowed
+    assert "range=" not in windowed
+
+    plain = src._url("SPY", range_="2y", interval="1d")
+    assert "range=2y" in plain
+    assert "period1=" not in plain
