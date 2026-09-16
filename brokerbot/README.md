@@ -92,19 +92,68 @@ python -m brokerbot.cli noise --strategy sma_crossover --runs 100
 Runs the strategy on random walks containing **zero real signal**:
 
 ```
-  best        +92.9%
-  90th pct    +44.3%
-  median      -11.1%
-  worst       -36.3%
+  best        +180.1%
+  90th pct    +52.2%
+  median       +3.1%
+  10th pct    -30.9%
+  worst       -46.6%
 
-  beat buy-and-hold in 20/60 runs by luck alone
+  beat buy-and-hold in 40/100 runs by luck alone
 ```
 
-On pure noise, the best run returns +92.9%, and the strategy beats holding a
-third of the time by chance. **That's the bar your real backtest has to clear**
-to mean anything — anything under +44% here is indistinguishable from luck.
+On pure noise, the best run returns +180.1%, and the strategy beats holding
+40% of the time by chance. **That's the bar your real backtest has to clear**
+to mean anything — anything under +52% here is indistinguishable from luck.
 
 Nothing else in this repo will save you as much money as internalising that.
+
+#### Match the baseline to the asset class
+
+The baseline is only meaningful if the synthetic paths resemble what you
+actually trade. The generator's defaults are a moderate-volatility equity
+(~1.2% daily), and pointing them at a crypto backtest understates the bar by
+a factor of five:
+
+```bash
+python -m brokerbot.cli noise --strategy sma_crossover --preset crypto_noise
+```
+
+```
+                       default (equity)   --preset crypto_noise
+  90th pct                     +52.2%                  +264.3%
+  best                        +180.1%                +8,476.1%
+```
+
+A crypto backtest returning +150% clears the equity bar comfortably and is
+**below noise** for crypto. That is the entire mistake this flag exists to
+prevent.
+
+| preset | daily vol | 10-year max drawdown | calibrated against |
+|---|---|---|---|
+| `equity_index` | 1.1% | ~37% | index decades: −34% (2020), −57% (2008) |
+| `single_equity` | 1.9% | ~60% | a large-cap without the index's diversification |
+| `crypto` | 3.5% | ~76% | Bitcoin 2015–2025: ~267× and −83% at worst |
+| `crypto_noise` | 3.5% | — | crypto's shape with **zero** drift and momentum |
+
+Two caveats worth knowing:
+
+- **Use `crypto_noise`, not `crypto`, for a baseline.** The asset presets
+  carry deliberate momentum, because a decade-long path cannot show both
+  crypto's terminal multiple and its −80% drawdowns without bear markets that
+  persist. Momentum is a real edge, so a trend-following strategy is *supposed*
+  to make money on `crypto` — which disqualifies it as a zero-edge baseline.
+- **Calibrated for equities and crypto only.** Anything with a different
+  return shape — FX, rates, commodity futures, options, anything mean-reverting
+  by construction — is not modelled here, and the baseline you get for it is
+  not one you should trust.
+
+Under the hood: returns are drawn from a Student-t (fat tails, as real daily
+returns have), capped per bar (venues halt; uncapped tails do not), with
+mean-reverting volatility so it arrives in bursts. Gaussian returns compounded
+at crypto's volatility diverge — they produce 100% drawdowns, with the price
+going effectively to zero. `drift`, `volatility` and `trend_strength` stay
+independent knobs throughout, so you can vary one without silently moving the
+others.
 
 ---
 
@@ -294,11 +343,12 @@ python -m brokerbot.cli broker --check saxo                    # SAXO_TOKEN env 
 **Data:** CSV is the primary path — export from your broker or Yahoo, and the
 backtest stays reproducible forever. Use **split- and dividend-adjusted**
 prices; the loader prefers an `adj_close` column and warns on suspected
-unadjusted splits. A Yahoo source is included but was written blind (this
-sandbox's proxy blocked it), so verify it before relying on it.
+unadjusted splits. There is no live-API source: export the CSV yourself. A
+vendor that revises history changes your backtest underneath you, and a
+network call turns a reproducible result into a different one each run.
 
 ```bash
-pip install -r requirements-dev.txt && pytest    # 259 tests, both projects
+pip install -r requirements-dev.txt && pytest    # 295 tests, both projects
 ```
 
 ---
@@ -329,7 +379,7 @@ multi-day run on day one: **[docs/SEVEN_DAY_TRIAL.md](../docs/SEVEN_DAY_TRIAL.md
 brokerbot/
   models.py       Bar, Order, Fill, ClosedTrade  (Bar is frozen — no accidental mutation)
   costs.py        commission, spread, slippage, FX + real Swedish broker presets
-  data/           CSV, synthetic, Yahoo, and a validator that catches bad data
+  data/           CSV loader, calibrated synthetic series, and a validator that catches bad data
   strategy/       interface + SMA crossover, momentum, mean reversion, buy & hold
   backtest/       engine (next-bar fills), metrics (benchmark-first), walk-forward
   news/           RSS ingest, dedup, entity resolution, Claude classifier, pipeline
