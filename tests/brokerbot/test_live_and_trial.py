@@ -151,7 +151,14 @@ async def test_heartbeat_is_written_every_cycle(broker, tmp_path):
     await runner.cycle()
     beat = json.loads((Path(tmp_path) / "heartbeat.json").read_text())
     assert beat["connected"] is True
-    assert "last_cycle" in beat
+    assert "last_cycle_utc" in beat
+
+    # The stored clock is UTC and the reader's is not. Without a local
+    # rendering and a plain age beside it, someone checking a healthy run
+    # against their own watch concludes it died hours ago - which is exactly
+    # what this file exists to prevent.
+    assert "last_cycle_local" in beat
+    assert beat["age_seconds"] < 60
 
 
 async def test_unexpected_broker_position_is_flagged(broker, tmp_path):

@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .live import CycleResult
+from .models import to_local, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class TrialTracker:
     # --- recording --------------------------------------------------------
     def start(self, *, dry_run: bool) -> datetime:
         self.dir.mkdir(parents=True, exist_ok=True)
-        started = datetime.utcnow()
+        started = utcnow()
         self.meta_path.write_text(json.dumps({
             "started_at": started.isoformat(),
             "planned_end": (started + timedelta(days=self.days)).isoformat(),
@@ -161,7 +162,7 @@ class TrialTracker:
                 pass
 
         if not rows:
-            now = datetime.utcnow()
+            now = utcnow()
             r = TrialReport(started_at=now, ended_at=now)
             r.checks.append(Check(
                 "any_cycles", False,
@@ -300,7 +301,8 @@ class TrialTracker:
     def render(self, r: TrialReport) -> str:
         lines = [
             "7-day demo trial - operational assessment",
-            f"{r.started_at:%Y-%m-%d %H:%M} to {r.ended_at:%Y-%m-%d %H:%M} "
+            f"{to_local(r.started_at):%Y-%m-%d %H:%M} to "
+            f"{to_local(r.ended_at):%Y-%m-%d %H:%M} (local) "
             f"({r.days:.1f} days, {'dry-run' if r.dry_run else 'orders placed'})",
             "",
             f"Cycles      {r.completed_cycles} completed, {r.failed_cycles} failed "

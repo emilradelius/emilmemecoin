@@ -32,7 +32,7 @@ from pathlib import Path
 from .brokers.base import AccountSummary, Broker, BrokerPosition
 from .costs import CostModel
 from .data.base import BarSource
-from .models import Bar, Order, OrderType, Side
+from .models import Bar, Order, OrderType, Side, to_local, utcnow
 from .strategy.base import Strategy
 
 log = logging.getLogger(__name__)
@@ -187,8 +187,15 @@ class LiveRunner:
         Tuesday' look identical from outside and mean opposite things."""
         try:
             self.state_dir.mkdir(parents=True, exist_ok=True)
+            # Three renderings of one instant. Stored time is UTC, like
+            # everything else here; a person reads this file against their own
+            # clock and concludes a healthy run died hours ago, so local time
+            # and a plain age in seconds go in beside it.
+            now = utcnow()
             self.heartbeat_path.write_text(json.dumps({
-                "last_cycle": result.ts.isoformat(),
+                "last_cycle_local": to_local(result.ts).isoformat(timespec="seconds"),
+                "age_seconds": round((now - result.ts).total_seconds()),
+                "last_cycle_utc": result.ts.isoformat(),
                 "ok": result.ok,
                 "connected": result.connected,
                 "equity": result.equity,
@@ -214,7 +221,7 @@ class LiveRunner:
 
     # --- one cycle --------------------------------------------------------
     async def cycle(self) -> CycleResult:
-        result = CycleResult(ts=datetime.utcnow())
+        result = CycleResult(ts=utcnow())
 
         # 1. Connection. Checked first and every time: an expired token is the
         #    single most likely reason a multi-day run stops.
@@ -377,7 +384,7 @@ class LiveRunner:
                 log.warning("kill switch present at %s - stopping",
                             self.kill_switch_path)
                 break
-            if until and datetime.utcnow() >= until:
+            if until and utcnow() >= until:
                 log.info("scheduled end reached")
                 break
 

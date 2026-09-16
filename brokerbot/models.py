@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 
 
@@ -35,6 +35,26 @@ class OrderStatus(str, Enum):
 
 def _uid() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def utcnow() -> datetime:
+    """Naive UTC, the one clock every stored timestamp in this package uses.
+
+    Naive rather than aware because that is what is already on disk, and UTC
+    rather than local because a 42-day run crosses a DST change: local naive
+    timestamps would step backwards for an hour, and the trial report would
+    score that as downtime that never happened.
+
+    The cost is that a stored time matches nobody's wall clock outside
+    Greenwich, so anything shown to a person is converted back first - see
+    :func:`to_local`.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def to_local(ts: datetime) -> datetime:
+    """A naive-UTC timestamp as naive local time. Display only."""
+    return ts.replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
 
 
 @dataclass(slots=True, frozen=True)
