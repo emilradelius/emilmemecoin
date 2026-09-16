@@ -8,5 +8,9 @@ when the vendor revises history.
 from .base import BarSource
 from .csv_source import CsvBarSource
 from .synthetic import ASSET_PRESETS, random_walk
+from .yahoo import YahooBarSource, YahooError
 
-__all__ = ["BarSource", "CsvBarSource", "random_walk", "ASSET_PRESETS"]
+__all__ = [
+    "BarSource", "CsvBarSource", "random_walk", "ASSET_PRESETS",
+    "YahooBarSource", "YahooError",
+]

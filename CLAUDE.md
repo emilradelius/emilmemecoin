@@ -16,7 +16,7 @@ They are deliberately separate packages. Different venues, data, cost structure 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
-pytest                                    # 259 tests, both projects
+pytest                                    # 295 tests, both projects
 pytest tests/brokerbot/test_pine.py        # one file
 pytest -k "test_fills_happen_at_next"      # one test
 pytest tests/brokerbot -q                  # one project
@@ -32,8 +32,8 @@ python -m brokerbot.cli noise --strategy price_vs_sma --runs 100
 python -m brokerbot.cli backtest --csv data/x.csv --symbol X --strategy momentum
 python -m brokerbot.cli walkforward --csv data/x.csv --strategy sma_crossover
 python -m brokerbot.cli pine --traps       # TradingView Strategy Tester pitfalls
-python -m brokerbot.cli preflight --broker saxo --symbols VOLV-B.ST
-python -m brokerbot.cli trial --broker saxo --symbols VOLV-B.ST --days 7
+python -m brokerbot.cli preflight --broker paper --symbols VOLV-B.ST
+python -m brokerbot.cli trial --broker paper --symbols VOLV-B.ST --days 7
 python -m brokerbot.cli trial --report
 ```
 
@@ -84,9 +84,11 @@ Three invariants keep backtests honest. **Do not regress these** — each has a 
 2. **Every backtest reports a buy-and-hold benchmark** run through the identical cost path, and beating it requires better *risk-adjusted* return, not just higher return (`backtest/metrics.py`).
 3. **`costs.py` is not optional.** The same mean-reversion strategy returns +18.9% frictionless and −16.6% under eToro costs, with buy-and-hold beating both. Omitting costs does not overstate returns, it inverts the conclusion.
 
-`cli.py noise` runs a strategy over zero-edge random walks to establish what apparent performance the method manufactures from nothing. It is the most useful tool here — `price_vs_sma` beats buy-and-hold in 38 of 100 noise runs, so a single asset beating it once is not evidence.
+`cli.py noise` runs a strategy over zero-edge random walks to establish what apparent performance the method manufactures from nothing. It is the most useful tool here — `sma_crossover` beats buy-and-hold in 40 of 100 noise runs and `momentum` in 26, so a single asset beating it once is not evidence. The rate is strategy-specific: `price_vs_sma` manages only 8 of 100, so the same result means different things depending on which rule produced it. Re-measure rather than quoting these numbers; they move whenever the generator is recalibrated.
 
-`data/synthetic.py` keeps `drift`, `volatility` and `trend_strength` orthogonal via two corrections documented in the file. Both were real bugs. Do not simplify that code without reading the comments.
+`data/synthetic.py` keeps `drift`, `volatility` and `trend_strength` orthogonal via two corrections documented in the file. Both were real bugs. Do not simplify that code without reading the comments. `ASSET_PRESETS` (`--preset crypto|crypto_noise|equity_index|single_equity`) carries calibrated settings per asset class — a noise baseline is only valid for the class it imitates, and equity settings badly understate crypto.
+
+`PaperBroker` takes an optional `quotes` source (`data/yahoo.py`, an undocumented free endpoint) so the live path can be rehearsed without an account. Two limits are deliberate and should stay: `supports_live` remains `False`, because a free feed must never size a real order; and `last_price` caches what it fetched so the fill uses the same price the signal was computed from, rather than a quote that arrived in between.
 
 ### News (brokerbot/news/)
 
@@ -105,15 +107,13 @@ Running the model first costs roughly 50× more for identical output.
 
 ## Current state
 
-Nothing is running. No credentials are configured anywhere. `data/` does not exist.
+No credentials are configured anywhere. The paper path runs end-to-end with no account: `preflight --broker paper` is clean and `trial --broker paper` completes cycles, places dry-run orders and reconciles positions.
 
 Known gaps, in order of how much they block progress:
 
-1. **`PaperBroker` has no price feed**, so `preflight`/`trial --broker paper` fails with "no price available". A dry run currently requires a real broker connection (Saxo demo). This is the main thing stopping the owner from trying the live path without opening an account.
-2. **No broker adapter has been exercised against a live API.** Written against documented shapes; the sandbox had no credentials and blocked outbound calls. `preflight` reports which call fails.
-3. **X account scores start empty** in memebot — they are learned from calls graded 24h later, so ~2 weeks of shadow mode are needed before they mean anything. `runtime.shadow_mode: true` is the default and should stay on.
-4. **News entity universe is ~16 names** (`news/entities.py`). A story about a company not in that list is invisible.
-5. **`data/synthetic.py` cannot produce realistic high-volatility paths** — at crypto volatility it generates 100% buy-and-hold drawdowns where real Bitcoin's worst was −83%. The noise baseline is trustworthy for moderate-volatility equities, not crypto.
+1. **No broker adapter has been exercised against a live API.** Written against documented shapes; the sandbox had no credentials and blocked outbound calls. `preflight` reports which call fails. The paper broker does **not** reduce this risk — it never speaks a broker protocol.
+2. **X account scores start empty** in memebot — they are learned from calls graded 24h later, so ~2 weeks of shadow mode are needed before they mean anything. `runtime.shadow_mode: true` is the default and should stay on.
+3. **News entity universe is ~16 names** (`news/entities.py`). A story about a company not in that list is invisible.
 
 ## Working with the owner
 
@@ -129,3 +129,5 @@ Docs written for him, not for Claude: `brokerbot/README.md`, `docs/SEVEN_DAY_TRI
 ## Attribution
 
 Git remote is `emilradelius/emilmemecoin`. The repo was empty at first push, so `main` and `claude/telegram-meme-coin-bot-4m9gqj` point at the same commit; push to both or the branches diverge.
+
+`.gitignore` must keep the `data/` pattern anchored as **`/data/`**. Unanchored, it matches at any depth and silently excludes the `brokerbot/data/` source package — which is exactly what happened: the package was absent from a fresh clone and three test modules failed to import. Nothing warns you; `git status` stays clean.

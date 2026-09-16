@@ -5,12 +5,22 @@ before you have opened an account with anybody. It applies the same cost model
 as the backtester, so paper results and backtest results are directly
 comparable - if they diverge, something in the live path is wrong, and that is
 exactly what you want to find out here rather than later.
+
+Fills need a price, and a simulated broker has no market to ask. Prices
+therefore come from one of two places: pushed in with :meth:`set_price` (what
+the tests do), or pulled from an optional ``quotes`` source - see
+:mod:`brokerbot.data.yahoo`. Without either, every order is rejected for want
+of a price, which is the honest outcome: a paper fill at an invented price
+teaches you nothing you would not have learned by guessing.
+
+``supports_live`` stays ``False``. A free quote feed is good enough to
+rehearse the machinery and nowhere near good enough to size a real order.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from typing import Any
 
 from ..costs import CostModel
 from ..models import Order, OrderStatus, PositionState, Side
@@ -24,11 +34,13 @@ class PaperBroker(Broker):
     supports_live = False
 
     def __init__(self, costs: CostModel, *, starting_cash: float = 100_000.0,
-                 currency: str = "SEK", needs_fx: bool = False) -> None:
+                 currency: str = "SEK", needs_fx: bool = False,
+                 quotes: Any = None) -> None:
         self.costs = costs
         self.cash = starting_cash
         self.currency = currency
         self.needs_fx = needs_fx
+        self.quotes = quotes
         self._positions: dict[str, PositionState] = {}
         self._prices: dict[str, float] = {}
         self._orders = 0
@@ -40,7 +52,34 @@ class PaperBroker(Broker):
         return True
 
     async def last_price(self, symbol: str) -> float | None:
+        """Latest price for ``symbol``, refreshed from ``quotes`` if configured.
+
+        The fetched price is cached so that the order placed in response to a
+        signal fills at the same price the signal was computed from. A quote
+        that arrives *between* the two would be a fill at a price the strategy
+        never saw - small, but it is look-ahead, and this is the layer that is
+        supposed to be honest about that.
+
+        A failed fetch falls back to the last known price rather than dropping
+        the symbol, and the staleness surfaces in the trial report as a cycle
+        error rather than being silently smoothed over.
+        """
+        if self.quotes is None:
+            return self._prices.get(symbol)
+
+        try:
+            fresh = await self.quotes.last_price(symbol)
+        except Exception as exc:                       # noqa: BLE001
+            log.warning("[paper] quote for %s failed: %s", symbol, exc)
+            fresh = None
+
+        if fresh is not None and fresh > 0:
+            self._prices[symbol] = fresh
         return self._prices.get(symbol)
+
+    async def close(self) -> None:
+        if self.quotes is not None and hasattr(self.quotes, "close"):
+            await self.quotes.close()
 
     async def account(self) -> AccountSummary:
         held = sum(

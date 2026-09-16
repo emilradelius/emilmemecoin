@@ -251,7 +251,8 @@ def _build_broker(name: str, args):
     import os
     if name == "paper":
         from .brokers.paper import PaperBroker
-        return PaperBroker(PRESETS[args.costs], starting_cash=args.cash)
+        return PaperBroker(PRESETS[args.costs], starting_cash=args.cash,
+                           quotes=_build_quotes(args))
     if name == "saxo":
         from .brokers.saxo import SaxoBroker
         return SaxoBroker(
@@ -272,6 +273,14 @@ def _build_broker(name: str, args):
             raise SystemExit("set ETORO_API_KEY from https://builders.etoro.com/")
         return EtoroBroker(key, demo=True)
     raise SystemExit(f"unknown broker {name!r}")
+
+
+def _build_quotes(args):
+    """Price feed for the paper broker. Real brokers quote their own prices."""
+    if getattr(args, "quotes", "yahoo") != "yahoo":
+        return None
+    from .data.yahoo import YahooBarSource
+    return YahooBarSource()
 
 
 def _build_news(args):
@@ -321,13 +330,30 @@ def cmd_preflight(args) -> int:
         else:
             acct = await broker.account()
             print(f"[ok]   account: {acct.equity:,.2f} {acct.currency}")
+            quotes = getattr(broker, "quotes", None)
             for sym in symbols:
                 price = await broker.last_price(sym)
-                if price:
-                    print(f"[ok]   price {sym}: {price}")
-                else:
+                if not price:
                     print(f"[FAIL] no price for {sym}")
                     problems.append(f"no price available for {sym}")
+                    continue
+
+                ccy = quotes.currency_of(sym) if quotes is not None else None
+                print(f"[ok]   price {sym}: {price:,.4g} {ccy or ''}".rstrip())
+
+                # A symbol quoted in the wrong currency still produces a
+                # perfectly plausible fill, a perfectly plausible equity
+                # curve, and a number that means nothing. AAPL at 260 USD
+                # spends 260 SEK of a SEK account and nobody notices.
+                if ccy and ccy != acct.currency:
+                    print(f"[FAIL] {sym} is quoted in {ccy}, account is in "
+                          f"{acct.currency}")
+                    problems.append(
+                        f"{sym} quoted in {ccy} but the account is in "
+                        f"{acct.currency} - no FX conversion is applied, so "
+                        f"position sizes would be wrong. Use symbols from one "
+                        f"currency, or set --costs us_equities_from_sek."
+                    )
         await broker.close()
 
     asyncio.run(checks())
@@ -374,7 +400,18 @@ def cmd_trial(args) -> int:
         raise SystemExit(f"unknown strategy. Options: {', '.join(REGISTRY)}")
 
     broker = _build_broker(args.broker, args)
-    history = CsvBarSource(args.csv) if args.csv else None
+
+    # Warmup history. A CSV you exported stays reproducible, so it wins when
+    # given. Otherwise fall back to the same feed the paper broker quotes
+    # from: without it, a strategy with a 50-day warmup produces no signal at
+    # all in a 7-day trial, and the run measures nothing.
+    if args.csv:
+        history = CsvBarSource(args.csv)
+    else:
+        history = _build_quotes(args)
+        if history is not None:
+            print(f"No --csv given - seeding warmup from {history.name}. "
+                  "Export a CSV if you need the run to be reproducible.\n")
     if history is None:
         print("No --csv history given. Strategies with a warmup window will "
               "not signal until enough live days accumulate.\n")
@@ -454,6 +491,9 @@ def main() -> int:
                        choices=["paper", "saxo", "ibkr", "etoro"])
         p.add_argument("--symbols", default="")
         p.add_argument("--csv", help="historical bars to seed the strategy warmup")
+        p.add_argument("--quotes", default="yahoo", choices=["yahoo", "none"],
+                       help="price feed for --broker paper. Real brokers quote "
+                            "their own prices and ignore this.")
         p.add_argument("--strategy", default="news_drift", choices=sorted(REGISTRY))
         p.add_argument("--costs", default="nordic_equities", choices=sorted(PRESETS))
         p.add_argument("--cash", type=float, default=100_000.0)
