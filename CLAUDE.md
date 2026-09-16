@@ -122,6 +122,44 @@ worth doing - it is just not the same thing.
 
 `PaperBroker` takes an optional `quotes` source (`data/yahoo.py`, an undocumented free endpoint) so the live path can be rehearsed without an account. Two limits are deliberate and should stay: `supports_live` remains `False`, because a free feed must never size a real order; and `last_price` caches what it fetched so the fill uses the same price the signal was computed from, rather than a quote that arrived in between.
 
+### TJR / ICT sweep-and-shift (measured 2026-09-16)
+
+`strategy/tjr.py` mechanises the model taught by TJR (Tyler J. Riches):
+Power-of-3 daily template, Asia range swept at the London or New York open,
+market structure shift against the sweep, entry on the retracement into the
+displacement's fair value gap, stop past the sweep extreme, target the
+opposing external liquidity, 1% risk. Every discretionary term is pinned to
+one written definition in the module docstring, chosen before any result was
+seen, and the arbitrary ones are marked and adjustable.
+
+`backtest/bracket.py` exists because the main engine fills at the next bar's
+open and has no stops - run through it, a TJR setup exits five minutes after
+being stopped, which measures the engine rather than the strategy. The bracket
+engine resolves stop and target intrabar, gives every ambiguous bar to the
+stop, charges slippage in ticks, and models futures costs per contract rather
+than as a percentage of notional (one NQ contract is ~$480k of notional for
+~$15 of round-turn friction; a percentage model invents a cost eighty times
+the real one).
+
+**Result: 60 days of 5-minute NQ and ES, 20 parameter variants, 18 lose
+money.** The two that profit contradict each other - "NY killzone only" makes
++3.2% on NQ and -4.8% on ES; a fixed 3R target makes +4.4% on ES and -5.1% on
+NQ. Same knob, opposite sign, which is what noise looks like.
+
+The decisive test is in the scratch script `noise_tjr.py`, worth rebuilding if
+lost: keep the model's entry times, stop distance, target distance and sizing,
+and replace only the direction with a coin flip. **The coin did at least as
+well as the model's own direction in 87% of 500 runs on NQ and 75% on ES.**
+The sweep, the shift and the gap contributed nothing detectable - the P&L came
+from the risk geometry alone.
+
+Caveats that matter before anyone re-litigates this: 13-24 trades is a small
+sample, 60 days is one regime, and this is the mechanical reading, not a
+discretionary trader's. It does not show the idea is worthless. It does show
+that *this* reading of it has no edge, and that a positive backtest found by
+turning knobs on this data should be assumed to be noise until it survives the
+coin-flip control.
+
 ### News (brokerbot/news/)
 
 Pipeline order is chosen for cost as much as correctness:
