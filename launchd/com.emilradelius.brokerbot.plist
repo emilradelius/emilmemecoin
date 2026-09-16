@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Runs the brokerbot paper trial in the background, across reboots.
+  Records one day of the S&P + momentum overlay, on paper, once every evening.
 
-  Edit the symbols and strategy below before installing. Install with:
-    cp launchd/com.emilradelius.brokerbot.plist ~/Library/LaunchAgents/
-    launchctl load ~/Library/LaunchAgents/com.emilradelius.brokerbot.plist
+  It holds nothing and can place no order: the CLI it runs has no broker and
+  no credentials. It marks a set of weights against real closing prices and
+  writes the result to data/overlay/state.json.
 
-  Stop it at any time with `touch data/live/STOP`, which shuts the runner down
-  cleanly within one cycle. To remove the job entirely, see docs/PAPER_RUN.md.
+  Read it with:  python -m brokerbot.cli overlay
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -24,48 +23,36 @@
         <string>/Users/emilradelius/Desktop/emilmemecoin/.venv/bin/python</string>
         <string>-m</string>
         <string>brokerbot.cli</string>
-        <string>trial</string>
-        <string>--broker</string>
-        <string>paper</string>
-        <string>--symbols</string>
-        <string>VOLV-B.ST,ERIC-B.ST,INVE-B.ST</string>
-        <string>--strategy</string>
-        <string>momentum</string>
-        <string>--days</string>
-        <string>42</string>
-        <string>--cycle-seconds</string>
-        <string>900</string>
+        <string>overlay</string>
+        <string>--run</string>
     </array>
 
-    <!-- No --live-orders. This job must never be able to send a real order;
-         adding that flag here would mean a reboot is enough to start trading. -->
-
-    <!-- Without this, Python buffers stdout when it is not a terminal and
-         trial.log sits empty for hours while the run is perfectly healthy.
-         An empty log is indistinguishable from a dead job. -->
+    <!-- Without this, Python buffers stdout when it is not a terminal and the
+         log sits empty while the run is perfectly healthy. An empty log is
+         indistinguishable from a dead job. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>
     </dict>
 
+    <!-- 23:00 Stockholm, an hour after the US close, so the day's closing
+         prices exist. A cycle missed while the laptop was shut runs when it
+         next wakes; the tracker marks from the last close it saw, so a gap
+         costs a day of granularity rather than corrupting the series. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>23</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart if it dies, but not in a tight loop: a crash that repeats
-         every second fills the disk with logs and looks like uptime. -->
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-    <key>ThrottleInterval</key>
-    <integer>300</integer>
-
     <key>StandardOutPath</key>
-    <string>/Users/emilradelius/Desktop/emilmemecoin/data/live/trial.log</string>
+    <string>/Users/emilradelius/Desktop/emilmemecoin/data/overlay/run.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/emilradelius/Desktop/emilmemecoin/data/live/trial.log</string>
+    <string>/Users/emilradelius/Desktop/emilmemecoin/data/overlay/run.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>

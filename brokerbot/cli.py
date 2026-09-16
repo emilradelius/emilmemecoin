@@ -360,6 +360,33 @@ def cmd_history(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_overlay(args) -> int:
+    """Paper-track the S&P + momentum overlay against the S&P alone."""
+    from .overlay import OverlayTracker, describe_universe
+
+    if args.universe:
+        print("The overlay trades these 28 futures, long or short:\n")
+        print(describe_universe())
+        return 0
+
+    tracker = OverlayTracker(args.state_dir, overlay=args.overlay,
+                             starting_equity=args.cash)
+    if args.run:
+        result = tracker.cycle()
+        if not result.get("ok"):
+            print(f"cycle failed: {result.get('error')}")
+            return 1
+        print(f"{result['as_of']}  equity {result['equity']:,.0f}  "
+              f"S&P {result['benchmark']:,.0f}  "
+              f"{result['positions']} positions"
+              + ("  [already recorded]" if result.get("already_recorded")
+                 else "  [rebalanced]" if result["rebalanced"] else ""))
+        return 0
+
+    print(tracker.render())
+    return 0
+
+
 def cmd_preflight(args) -> int:
     """Verify every moving part before committing a week to the run."""
     import os
@@ -566,6 +593,17 @@ def main() -> int:
     p.add_argument("--years", type=int, default=10)
     p.add_argument("--out-dir", default="data/history")
     p.set_defaults(func=cmd_history)
+
+    p = sub.add_parser("overlay")
+    p.add_argument("--run", action="store_true",
+                   help="record one day; without it, print the report")
+    p.add_argument("--universe", action="store_true",
+                   help="list what it trades and exit")
+    p.add_argument("--overlay", type=float, default=0.30,
+                   help="momentum exposure on top of the S&P")
+    p.add_argument("--cash", type=float, default=100_000.0)
+    p.add_argument("--state-dir", default="data/overlay")
+    p.set_defaults(func=cmd_overlay)
 
     p = sub.add_parser("preflight"); live_common(p)
     p.add_argument("--days", type=int, default=7)
