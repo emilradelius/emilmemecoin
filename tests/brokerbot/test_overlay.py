@@ -158,3 +158,24 @@ def test_running_twice_in_one_day_records_once(tracker, monkeypatch):
     final = tracker.load()
     assert len(final.history) == records
     assert final.equity == pytest.approx(equity)
+
+
+def test_borrowing_accrues_over_a_gap_not_per_cycle(tmp_path, monkeypatch):
+    """A shut laptop, a weekend or a holiday means one cycle covers several
+    days. The price return already spans the whole gap, so charging a single
+    day of borrowing hands the strategy free leverage over exactly the
+    stretches nobody was watching."""
+    def run(gap_days):
+        t = OverlayTracker(tmp_path / f"g{gap_days}", overlay=0.30, borrow_rate=0.10)
+        monkeypatch.setattr(t, "fetch", lambda syms, **kw: _fake(syms))
+        t.cycle()
+        state = t.load()
+        # Rewind the stored date so the next cycle looks like a long gap.
+        gone = date.fromisoformat(state.history[-1]["date"]) - timedelta(days=gap_days)
+        state.history[-1]["date"] = gone.isoformat()
+        t.save(state)
+        t.cycle()
+        return t.load().equity
+
+    # Same prices either side, so any difference is the financing charge.
+    assert run(10) < run(1)

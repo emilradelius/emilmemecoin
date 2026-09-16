@@ -232,8 +232,17 @@ class OverlayTracker:
             if before and now and before > 0:
                 benchmark_return = now / before - 1
 
-            daily_borrow = self.overlay * self.borrow_rate / 252
-            total = benchmark_return + self.overlay * overlay_return - daily_borrow
+            # Borrowing accrues per calendar day, but a cycle can cover more
+            # than one: a shut laptop, a weekend, a holiday. The price return
+            # already spans the whole gap, so charging a single day here would
+            # hand the strategy free leverage over exactly the stretches when
+            # nobody was watching - and flatter it by more than its own edge.
+            elapsed = 1
+            if state.history:
+                previous = date.fromisoformat(state.history[-1]["date"])
+                elapsed = max(1, (as_of - previous).days)
+            borrow = self.overlay * self.borrow_rate * elapsed / 365
+            total = benchmark_return + self.overlay * overlay_return - borrow
             state.equity *= 1 + total
             state.benchmark_equity *= 1 + benchmark_return
 
