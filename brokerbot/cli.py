@@ -303,6 +303,63 @@ def _build_news(args):
     )
 
 
+def cmd_history(args) -> int:
+    """Export real daily bars to CSV so backtests stay reproducible.
+
+    Yahoo revises its history. A backtest keyed to the live feed quietly
+    changes underneath you between runs, which is indistinguishable from your
+    own edits having done something. A file on disk does not move.
+    """
+    import csv
+
+    from .data.base import BarSource
+    from .data.yahoo import YahooBarSource, YahooError
+
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    if not symbols:
+        raise SystemExit("--symbols is required, e.g. --symbols VOLV-B.ST")
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    source = YahooBarSource()
+    failures = 0
+
+    for symbol in symbols:
+        try:
+            bars = source.load(symbol, range=f"{args.years}y")
+        except YahooError as exc:
+            print(f"{symbol:14} FAILED  {exc}")
+            failures += 1
+            continue
+        if not bars:
+            print(f"{symbol:14} FAILED  no bars returned")
+            failures += 1
+            continue
+
+        path = out_dir / f"{symbol.replace('^', '_')}.csv"
+        with path.open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["Date", "Open", "High", "Low", "Close", "Volume"])
+            for bar in bars:
+                writer.writerow([
+                    bar.ts.date(), f"{bar.open:.4f}", f"{bar.high:.4f}",
+                    f"{bar.low:.4f}", f"{bar.close:.4f}", int(bar.volume),
+                ])
+
+        # Say so rather than staying silent: a flaw here does not produce an
+        # error, it produces a confident and wrong backtest.
+        problems = BarSource.validate(bars)
+        note = "clean" if not problems else f"{len(problems)} WARNING(S)"
+        print(f"{symbol:14} {len(bars):5} bars  {bars[0].ts.date()} -> "
+              f"{bars[-1].ts.date()}  {source.currency_of(symbol) or '?':4} {note}")
+        for problem in problems[:3]:
+            print(f"               ! {problem}")
+
+    print(f"\nWrote to {out_dir}/. Back these up - they are what makes a "
+          f"result you can reproduce next month.")
+    return 1 if failures else 0
+
+
 def cmd_preflight(args) -> int:
     """Verify every moving part before committing a week to the run."""
     import os
@@ -502,6 +559,13 @@ def main() -> int:
         p.add_argument("--news", action="store_true", help="enable news classification")
         p.add_argument("--news-cap", type=float, default=10.0,
                        help="monthly USD cap for classification")
+
+    p = sub.add_parser("history")
+    p.add_argument("--symbols", required=True,
+                   help="comma-separated Yahoo symbols, e.g. VOLV-B.ST,ERIC-B.ST")
+    p.add_argument("--years", type=int, default=10)
+    p.add_argument("--out-dir", default="data/history")
+    p.set_defaults(func=cmd_history)
 
     p = sub.add_parser("preflight"); live_common(p)
     p.add_argument("--days", type=int, default=7)

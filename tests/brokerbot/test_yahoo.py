@@ -214,3 +214,56 @@ async def test_paper_broker_stays_marked_unfit_for_live_orders():
     """A free, undocumented feed is fine for rehearsal and must never be the
     thing that sizes real money."""
     assert PaperBroker.supports_live is False
+
+
+# --- regressions ----------------------------------------------------------
+def test_a_bar_that_closed_on_its_low_survives_adjustment():
+    """Rescaling the close by assigning the adjusted value directly, while the
+    low is computed as low*factor, puts the two one bit apart on a bar that
+    closed exactly on its low. The validator then reports a bad print that
+    does not exist - 17 of them on ten years of SEB-A.ST. Every price must be
+    scaled the same way."""
+    flat = {"chart": {"error": None, "result": [{
+        "meta": {"symbol": "VOLV-B.ST", "currency": "SEK"},
+        "timestamp": [1482278400],
+        "indicators": {
+            "quote": [{"open": [107.0999984741211], "high": [108.0],
+                       "low": [107.0], "close": [107.0], "volume": [1.0]}],
+            "adjclose": [{"adjclose": [61.891231536865234]}],
+        },
+    }]}}
+    bars = _source(flat).load("VOLV-B.ST")
+    assert BarSource.validate(bars) == []
+    bar = bars[0]
+    assert bar.low <= bar.close <= bar.high
+    assert bar.close == pytest.approx(61.891231536865234)
+
+
+def test_bar_dates_do_not_depend_on_the_machines_timezone(monkeypatch):
+    """Yahoo stamps a daily bar at the opening bell. Read in local time on a
+    machine west of the exchange, Stockholm's 08:00 UTC open lands on the
+    previous calendar day and shifts the entire series by one bar against
+    whatever it is compared with."""
+    import os
+    import time
+
+    stamp = 1482278400          # 2016-12-21 08:00 UTC, Stockholm open
+    payload = {"chart": {"error": None, "result": [{
+        "meta": {"symbol": "VOLV-B.ST", "currency": "SEK"},
+        "timestamp": [stamp],
+        "indicators": {
+            "quote": [{"open": [107.0], "high": [108.0], "low": [106.0],
+                       "close": [107.0], "volume": [1.0]}],
+            "adjclose": [{"adjclose": [107.0]}],
+        },
+    }]}}
+
+    dates = []
+    for tz in ("Europe/Stockholm", "America/Los_Angeles", "Pacific/Auckland"):
+        monkeypatch.setitem(os.environ, "TZ", tz)
+        time.tzset()
+        dates.append(_source(payload).load("VOLV-B.ST")[0].ts.date())
+
+    monkeypatch.undo()
+    time.tzset()
+    assert len(set(dates)) == 1, f"date moved with the timezone: {dates}"

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs the brokerbot paper trial in the background, across reboots.
+
+  Edit the symbols and strategy below before installing. Install with:
+    cp launchd/com.emilradelius.brokerbot.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.emilradelius.brokerbot.plist
+
+  Stop it at any time with `touch data/live/STOP`, which shuts the runner down
+  cleanly within one cycle. To remove the job entirely, see docs/PAPER_RUN.md.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.emilradelius.brokerbot</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/emilradelius/Desktop/emilmemecoin</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/emilradelius/Desktop/emilmemecoin/.venv/bin/python</string>
+        <string>-m</string>
+        <string>brokerbot.cli</string>
+        <string>trial</string>
+        <string>--broker</string>
+        <string>paper</string>
+        <string>--symbols</string>
+        <string>VOLV-B.ST,ERIC-B.ST,INVE-B.ST</string>
+        <string>--strategy</string>
+        <string>momentum</string>
+        <string>--days</string>
+        <string>42</string>
+        <string>--cycle-seconds</string>
+        <string>900</string>
+    </array>
+
+    <!-- No --live-orders. This job must never be able to send a real order;
+         adding that flag here would mean a reboot is enough to start trading. -->
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart if it dies, but not in a tight loop: a crash that repeats
+         every second fills the disk with logs and looks like uptime. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>300</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/emilradelius/Desktop/emilmemecoin/data/live/trial.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/emilradelius/Desktop/emilmemecoin/data/live/trial.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

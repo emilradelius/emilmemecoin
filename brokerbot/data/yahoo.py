@@ -31,7 +31,7 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..models import Bar
@@ -145,12 +145,6 @@ class YahooBarSource(BarSource):
                 gaps += 1
                 continue
 
-            factor = 1.0
-            adj = _at(adjusted, i)
-            if adj is not None and adj > 0:
-                factor = adj / close
-                close = adj
-
             open_ = _at(opens, i)
             high = _at(highs, i)
             low = _at(lows, i)
@@ -158,13 +152,26 @@ class YahooBarSource(BarSource):
                 gaps += 1
                 continue
 
+            factor = 1.0
+            adj = _at(adjusted, i)
+            if adj is not None and adj > 0:
+                factor = adj / close
+
+            # All four prices are scaled the same way, including the close -
+            # deliberately `close * factor` rather than assigning `adj`
+            # directly. On a bar that closed exactly on its low, `low * factor`
+            # and `adj` can differ by one bit, which puts the close a hair
+            # outside its own range and makes the quality validator report a
+            # bad print that is not there. Scaling by a positive constant is
+            # monotonic in IEEE-754, so doing it uniformly keeps
+            # low <= open, close <= high exactly true.
             bars.append(Bar(
                 symbol=symbol,
-                ts=datetime.fromtimestamp(stamp),
+                ts=_bar_time(stamp),
                 open=open_ * factor,
                 high=high * factor,
                 low=low * factor,
-                close=close,
+                close=close * factor,
                 volume=float(_at(volumes, i) or 0.0),
             ))
 
@@ -233,6 +240,19 @@ class YahooBarSource(BarSource):
 
     async def close(self) -> None:
         return None
+
+
+def _bar_time(stamp: float) -> datetime:
+    """Epoch to a naive datetime, via UTC rather than the machine's timezone.
+
+    Yahoo stamps a daily bar at the exchange's opening bell. Read with
+    ``fromtimestamp`` on a machine west of the exchange, a Stockholm open at
+    08:00 UTC becomes the *previous* calendar day, silently shifting the whole
+    series by one bar against anything it is compared to. No exchange this is
+    pointed at opens before 00:00 or after 23:00 UTC, so the UTC date is the
+    trading date everywhere.
+    """
+    return datetime.fromtimestamp(stamp, tz=timezone.utc).replace(tzinfo=None)
 
 
 def _at(values: list, i: int):

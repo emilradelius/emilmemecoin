@@ -28,6 +28,7 @@ pytest tests/brokerbot -q                  # one project
 
 ```bash
 python -m brokerbot.cli costs              # round-trip cost by broker profile
+python -m brokerbot.cli history --symbols VOLV-B.ST --years 10  # export CSVs
 python -m brokerbot.cli noise --strategy price_vs_sma --runs 100
 python -m brokerbot.cli backtest --csv data/x.csv --symbol X --strategy momentum
 python -m brokerbot.cli walkforward --csv data/x.csv --strategy sma_crossover
@@ -88,6 +89,37 @@ Three invariants keep backtests honest. **Do not regress these** — each has a 
 
 `data/synthetic.py` keeps `drift`, `volatility` and `trend_strength` orthogonal via two corrections documented in the file. Both were real bugs. Do not simplify that code without reading the comments. `ASSET_PRESETS` (`--preset crypto|crypto_noise|equity_index|single_equity`) carries calibrated settings per asset class — a noise baseline is only valid for the class it imitates, and equity settings badly understate crypto.
 
+### What the strategies actually score (measured 2026-09-16)
+
+Ten years of split- and dividend-adjusted daily bars, six Stockholm large caps
+plus OMXS30, under `nordic_equities` costs. Files in `data/history/`, exported
+with `cli history`.
+
+**Nothing in the library beats buy-and-hold. 0 of 28 symbol/strategy pairs.**
+Buy-and-hold returned +480% on Volvo and +545% on Investor; the best strategy
+result on either was +254%. Cost drag runs 30-70% of starting capital for
+`price_vs_sma` and `mean_reversion`, which trade often enough that the broker
+is the main beneficiary.
+
+The steelman was tested and also fails. Trend rules claim to cut drawdowns
+rather than to beat bull markets, and in the 2021-11 to 2023-01 bear window
+`momentum` does beat buy-and-hold on 6 of 7 symbols. That result does not
+survive contact with the repo's own tools:
+
+- It is one window, chosen after seeing the data, in one market where all
+  seven names fell together - closer to one observation than to seven.
+- `cli noise` manufactures a buy-and-hold beat from pure randomness in 26 of
+  100 runs for `momentum` and 40 of 100 for `sma_crossover`.
+- `cli walkforward` on real OMXS30 data rates both `momentum` and
+  `mean_reversion` **NOT robust**: 110% and 86% of in-sample return vanishes
+  out-of-sample, profitable in only 40% of windows.
+
+Re-run these before building on them; do not treat the numbers as settled.
+The conclusion to carry forward is not "these particular parameters are wrong"
+but that no edge has been demonstrated yet, so a paper phase run today would
+be rehearsing the machinery rather than testing a strategy. That is still
+worth doing - it is just not the same thing.
+
 `PaperBroker` takes an optional `quotes` source (`data/yahoo.py`, an undocumented free endpoint) so the live path can be rehearsed without an account. Two limits are deliberate and should stay: `supports_live` remains `False`, because a free feed must never size a real order; and `last_price` caches what it fetched so the fill uses the same price the signal was computed from, rather than a quote that arrived in between.
 
 ### News (brokerbot/news/)
@@ -107,7 +139,9 @@ Running the model first costs roughly 50× more for identical output.
 
 ## Current state
 
-No credentials are configured anywhere. The paper path runs end-to-end with no account: `preflight --broker paper` is clean and `trial --broker paper` completes cycles, places dry-run orders and reconciles positions.
+Set up locally at `~/Desktop/emilmemecoin` with a venv at `.venv`; 312 tests
+pass. No credentials are configured anywhere. The paper path runs end-to-end
+with no account: `preflight --broker paper` is clean and `trial --broker paper` completes cycles, places dry-run orders and reconciles positions.
 
 Known gaps, in order of how much they block progress:
 
@@ -124,7 +158,16 @@ Two recurring themes worth holding onto:
 - He is drawn to trading-bot content on TikTok and YouTube showing large returns. The measurement tools in this repo exist so claims like those can be checked rather than argued about. Run them rather than debating.
 - Sequence before real money: shadow → paper (6–8 weeks, 30+ closed trades) → `readiness` → live at a fraction of paper size. Roughly two months. Say so when asked to shortcut it.
 
-Docs written for him, not for Claude: `brokerbot/README.md`, `docs/SEVEN_DAY_TRIAL.md`, `docs/TUNING.md`, `docs/ALPHALEDGER.md`.
+Docs written for him, not for Claude: `brokerbot/README.md`, `docs/PAPER_RUN.md`, `docs/SEVEN_DAY_TRIAL.md`, `docs/TUNING.md`, `docs/ALPHALEDGER.md`.
+
+He asked about connecting Claude to TradingView (2026-09). The MCP bridge in
+the article he found is read-only and cannot place an order; TradingView's own
+broker integrations, Saxo included, are for trading by hand from a chart.
+Automating through them means alert -> webhook -> third-party bridge -> broker,
+which is three failure points more than talking to Saxo directly, as brokerbot
+already does. `cli pine` is the part worth keeping: it exports a strategy to
+Pine Script with commission and slippage pre-filled, so TradingView's tester
+becomes an independent check on our backtester rather than a trading venue.
 
 ## Attribution
 
