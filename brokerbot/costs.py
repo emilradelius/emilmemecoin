@@ -93,6 +93,14 @@ PRESETS: dict[str, CostModel] = {
         commission_pct=0.0005, commission_min=0.35, spread_pct=0.0003,
         slippage_pct=0.0004, fx_pct=0.0002,
     ),
+    # Crypto spot on a major exchange (Bybit/Binance taker ~0.055-0.1% per
+    # side). Cheap per trade by equity standards, but crypto spreads widen
+    # hard in exactly the fast markets a breakout rule trades into, so
+    # slippage is set above the headline fee rather than below it.
+    "crypto_spot": CostModel(
+        commission_pct=0.00075, commission_min=0.0, spread_pct=0.0006,
+        slippage_pct=0.0010, fx_pct=0.0,
+    ),
     # eToro: zero stated commission, but the spread is the product, and
     # non-USD deposits are converted.
     "etoro": CostModel(
